@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 from typing import Optional, Type
@@ -23,6 +24,7 @@ from typing import Optional, Type
 import numpy as np
 import torch
 from PIL import Image
+import cv2 as cv
 from rich.console import Console
 from typing_extensions import Literal
 
@@ -35,10 +37,11 @@ from nerfstudio.data.dataparsers.base_dataparser import (
 )
 from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.utils.io import load_from_json
+from nerfstudio.utils import plotly_utils as vis
 
 CONSOLE = Console(width=120)
 MAX_AUTO_RESOLUTION = 1600
-
+from nerfstudio.data.utils.annotation_3d import Annotation3D, global2local,id2label
 
 @dataclass
 class NerfstudioDataParserConfig(DataParserConfig):
@@ -54,7 +57,7 @@ class NerfstudioDataParserConfig(DataParserConfig):
     """How much to downscale images. If not set, images are chosen such that the max dimension is <1600px."""
     scene_scale: float = 1.0
     """How much to scale the region of interest by."""
-    orientation_method: Literal["pca", "up", "none"] = "up"
+    orientation_method: Literal["pca", "up", "none"] = "none"
     """The method to use for orientation."""
     center_poses: bool = True
     """Whether to center the poses."""
@@ -62,6 +65,7 @@ class NerfstudioDataParserConfig(DataParserConfig):
     """Whether to automatically scale the poses to fit in +/- 1 bounding box."""
     train_split_percentage: float = 0.9
     """The percent of images to use for training. The remaining images are for eval."""
+    annotation_3d = None
 
 
 @dataclass
@@ -79,6 +83,7 @@ class Nerfstudio(DataParser):
         mask_filenames = []
         poses = []
         num_skipped_image_filenames = 0
+        img_index=[]
 
         fx_fixed = "fl_x" in meta
         fy_fixed = "fl_y" in meta
@@ -142,6 +147,9 @@ class Nerfstudio(DataParser):
                 mask_filepath = PurePath(frame["mask_path"])
                 mask_fname = self._get_fname(mask_filepath, downsample_folder_prefix="masks_")
                 mask_filenames.append(mask_fname)
+            if "leader_board" in meta and meta['leader_board']:
+                index = str(fname).split('/')[-1]
+                img_index.append(index)
         if num_skipped_image_filenames >= 0:
             CONSOLE.log(f"Skipping {num_skipped_image_filenames} files in dataset split {split}.")
         assert (
@@ -159,18 +167,37 @@ class Nerfstudio(DataParser):
 
         # filter image_filenames and poses based on train/eval split percentage
         num_images = len(image_filenames)
-        num_train_images = math.ceil(num_images * self.config.train_split_percentage)
-        num_eval_images = num_images - num_train_images
         i_all = np.arange(num_images)
-        i_train = np.linspace(
-            0, num_images - 1, num_train_images, dtype=int
-        )  # equally spaced training images starting and ending at 0 and num_images-1
-        i_eval = np.setdiff1d(i_all, i_train)  # eval images are the remaining images
-        assert len(i_eval) == num_eval_images
+        ## 50% dropout Setting
+        if "dropout" in meta and meta['dropout']:
+            i_train = []
+            for i in range(0, num_images, 2):
+                if i % 4 == 0:
+                    i_train.extend([i,i+1,i+2])
+            i_train = np.array(i_train)
+            num_train_images = len(i_train)
+            i_eval = np.setdiff1d(i_all, i_train)[:-2]  # Demo kitti360
+        elif "leader_board" in meta and meta['leader_board']:
+            num_eval_images = int(meta['num_test'])
+            i_train = i_all[:(num_images - num_eval_images)]
+            i_eval = np.setdiff1d(i_all, i_train)
+            # i_train = np.arange(10,79)
+            # i_eval = np.arange(83,99)
+        else:
+            self.config.train_split_percentage = 0.8
+            num_train_images = math.ceil(num_images * self.config.train_split_percentage)
+            num_eval_images = num_images - num_train_images
+            i_train = np.linspace(
+                0, num_images - 1, num_train_images, dtype=int
+            )  # equally spaced training images starting and ending at 0 and num_images-1
+            i_eval = np.setdiff1d(i_all, i_train)  # eval images are the remaining images
+
         if split == "train":
             indices = i_train
+            print(f"Train View:  {indices}" + f"Train View Num{len(i_train)}")
         elif split in ["val", "test"]:
             indices = i_eval
+            print(f"Test View: {indices}" + f"Test View Num{len(i_eval)}")
         else:
             raise ValueError(f"Unknown dataparser split {split}")
 
@@ -181,13 +208,15 @@ class Nerfstudio(DataParser):
             orientation_method = self.config.orientation_method
 
         poses = torch.from_numpy(np.array(poses).astype(np.float32))
+
+        diff_mean_poses = torch.mean(poses[:,:3,-1], dim=0)
         poses, _ = camera_utils.auto_orient_and_center_poses(
             poses,
             method=orientation_method,
             center_poses=self.config.center_poses,
         )
 
-        # Scale poses
+        # Scale poses[translation]
         scale_factor = 1.0
         if self.config.auto_scale_poses:
             scale_factor /= torch.max(torch.abs(poses[:, :3, 3]))
@@ -232,6 +261,29 @@ class Nerfstudio(DataParser):
         else:
             distortion_params = torch.stack(distort, dim=0)[idx_tensor]
 
+        ## Where Use bounding box ,if Used,need to read instance image and bbx
+        if meta['use_bbx']:
+            print(f"BBx Abled!")
+            bbx2world = np.array(meta["bbx2w"])
+            bbox = []
+            instance_imgs = []
+            data_dir = '/data/datasets/KITTI-360/'
+            instance_path = os.path.join(data_dir, 'data_2d_semantics', 'train',
+                                         '2013_05_28_drive_0000_sync', 'image_00/instance')
+            for idx in range(3353, 3353 + 10, 1):
+                img_file = os.path.join(instance_path, "{:010d}.png".format(idx))
+                instance_imgs.append(cv.imread(img_file, -1))
+
+            bbx_root = os.path.join(data_dir, 'data_3d_bboxes')
+            self.annotation_3d = Annotation3D(os.path.join(bbx_root, 'train'), '2013_05_28_drive_0000_sync')
+            all_bbxes = self.load_bbx(instance_imgs=instance_imgs, bbx2w=bbx2world,
+                                      scale=scale_factor * self.config.scale_factor,
+                                      diff_centor_translation=diff_mean_poses)
+
+            # self.project2Dbbx(bbx=all_bbxes, img_idx=0, f=fx, cx=cx, cy=cy, img_file=image_filenames)
+        else:
+            print(f"BBx Unabled!")
+
         cameras = Cameras(
             fx=fx,
             fy=fy,
@@ -242,6 +294,9 @@ class Nerfstudio(DataParser):
             width=width,
             camera_to_worlds=poses[:, :3, :4],
             camera_type=camera_type,
+            bounding_box=all_bbxes,
+            test_idx= i_eval,
+            train_idx= i_train,
         )
 
         assert self.downscale_factor is not None
@@ -281,3 +336,50 @@ class Nerfstudio(DataParser):
         if self.downscale_factor > 1:
             return self.config.data / f"{downsample_folder_prefix}{self.downscale_factor}" / filepath.name
         return self.config.data / filepath
+
+
+    def load_bbx(self,instance_imgs = None,bbx2w =None,scale = 1,diff_centor_translation=0):
+        num_bbx = len(instance_imgs)
+
+        w2c = np.linalg.inv(bbx2w)
+        R_w2c = w2c[:3, :3]
+        t_w2c = w2c[:3, 3:]
+        all_bbxes = []
+        for img_id in range(num_bbx):
+            instance_map = instance_imgs[img_id]
+            car_global = instance_map[(instance_map > 26 * 1000) & (instance_map < 27 * 1000)]  ## Car 的global id 在26000-27000之间
+            set_idx = np.unique(car_global)
+
+            ## 找出该张图像对应的bbx 的 8个顶点（w系）
+            vertices = []
+            for idx in set_idx:
+                vertice = self.annotation_3d.objects[idx][-1].vertices
+                vertices.append(vertice)
+
+            vertices_w = np.array(vertices)[..., None]  ## 世界系下的 vertices
+            vertices_c = np.matmul(R_w2c[None, None, ...], vertices_w) + t_w2c[None, None, ...]  ## 当前图像的 相机系下的 vertices
+            vertices_c = torch.from_numpy(vertices_c) - diff_centor_translation[...,None]       ## Centor Pose
+            all_bbxes.append(vertices_c * scale)
+        return all_bbxes
+
+    def project2Dbbx(self, bbx=None, img_idx=-1,f=0, cx=0, cy=0,img_file = None):
+        intrinsics_all = np.array([
+            [f, 0, cx, 0],
+            [0, f, cy, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ])
+        vertices = bbx[img_idx]
+        bbx_img = cv.imread(str(img_file[img_idx*2]))
+        img = np.array(bbx_img).astype(np.float32).copy()
+        for idx in range(vertices.shape[0]):
+            uv = np.matmul(intrinsics_all[None, :3, :3], vertices[idx, ...]).squeeze(-1)
+            uv[:, :2] = (uv[:, :2] / uv[:, -1:])  ## 最后一维度归一化为1
+
+            left = int(min(uv[:, 0]))
+            right = int(max(uv[:, 0]))
+            top = int(min(uv[:, 1]))
+            bottom = int(max(uv[:, 1]))
+            img[top:bottom, left:right] = 0
+        cv.imwrite('projectbbx.png', np.concatenate((img , bbx_img ), axis=0))
+        exit()

@@ -47,6 +47,7 @@ class NeuSModelConfig(SurfaceModelConfig):
     """fixed base variance in NeuS sampler, the inv_s will be base * 2 ** iter during upsample"""
     perturb: bool = True
     """use to use perturb for the sampled points"""
+    inference_dataset = "off"
 
 
 class NeuSModel(SurfaceModel):

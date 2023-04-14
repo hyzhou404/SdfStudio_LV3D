@@ -31,6 +31,7 @@ from nerfstudio.pipelines.base_pipeline import Pipeline
 from nerfstudio.utils import install_checks
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import ItersPerSecColumn
+from nerfstudio.utils import plotly_utils as vis
 
 CONSOLE = Console(width=120)
 
@@ -83,7 +84,7 @@ def _render_trajectory_video(
                     CONSOLE.print(f"Could not find {rendered_output_name} in the model outputs", justify="center")
                     CONSOLE.print(f"Please set --rendered_output_name to one of: {outputs.keys()}", justify="center")
                     sys.exit(1)
-                output_image = outputs[rendered_output_name].cpu().numpy().squeeze(2)
+                output_image = outputs[rendered_output_name].cpu().numpy()
                 render_image.append(output_image)
             render_image = np.concatenate(render_image, axis=1)
             if output_format == "images":
@@ -118,11 +119,49 @@ class RenderTrajectory:
     # Name of the output file.
     output_path: Path = Path("renders/output.mp4")
     # How long the video should be.
-    seconds: float = 5.0
+    seconds: float = 8.0
     # How to save output data.
     output_format: Literal["images", "video"] = "video"
     # Specifies number of rays per chunk during eval.
     eval_num_rays_per_chunk: Optional[int] = None
+
+
+    def render_sptial_view(self, camera: Cameras,steps: int = 30 ,rots: int = 2, zrate: float = 1,radius: Optional[float] = None):
+
+        N_per_seg = 10
+        new_c2ws = []
+        ## 每次间隔4帧，选取首帧和末帧，转动 360 角度
+        for i in range(0,len(camera)-1,4):
+            start_point = camera[i].camera_to_worlds[:,3].detach().cpu().numpy()
+            end_point = camera[i+3].camera_to_worlds[:, 3].detach().cpu().numpy()
+
+            new_z = np.linspace(start_point[2],end_point[2],N_per_seg)
+            new_xyz = []
+            for theta in np.linspace(0., 2*np.pi, N_per_seg + 1)[:-1]:
+                x = radius * np.cos(theta) + (start_point[0] + end_point[0]) * 0.5
+                y = radius * np.sin(-theta) + (start_point[1] + end_point[1]) * 0.5
+                new_xyz.append(np.array([x,y]))
+            new_xyz = np.concatenate([np.array(new_xyz),new_z[...,None]],axis=1)
+            camera_pose = np.eye(4)
+            camera_pose = camera_pose[None,...].repeat(repeats=N_per_seg,axis = 0)
+            camera_pose[:,:3,:3] = camera[i].camera_to_worlds[:3,:3].detach().cpu().numpy()
+            camera_pose[:,:3,3] = new_xyz
+            new_c2ws.append(camera_pose)
+
+        new_c2ws = torch.tensor(new_c2ws).reshape(-1,4,4) ##[B,N,4,4]---> [B*N,4,4]
+
+        return Cameras(
+            fx=camera[0].fx[0],
+            fy=camera[0].fy[0],
+            cx=camera[0].cx[0],
+            cy=camera[0].cy[0],
+            height=camera[0].height,
+            width=camera[0].width,
+            distortion_params=camera[0].distortion_params,
+            camera_type=camera[0].camera_type,
+            camera_to_worlds=new_c2ws[:,:3,:4],
+        )
+
 
     def main(self) -> None:
         """Main function."""
@@ -139,8 +178,11 @@ class RenderTrajectory:
         # TODO(ethan): use camera information from parsing args
         if self.traj == "spiral":
             camera_start = pipeline.datamanager.eval_dataloader.get_camera(image_idx=0).flatten()
+            num_cameras = len(pipeline.datamanager.eval_dataset.filenames)
+            cameras = [pipeline.datamanager.eval_dataloader.get_camera(image_idx=i) for i in range(num_cameras)]
             # TODO(ethan): pass in the up direction of the camera
-            camera_path = get_spiral_path(camera_start, steps=30, radius=0.1)
+            # camera_path = get_spiral_path(camera_start, steps=30, radius=0.1)
+            camera_path = self.render_sptial_view(cameras, steps=30, radius=0.01)
         elif self.traj == "filename":
             with open(self.camera_path_filename, "r", encoding="utf-8") as f:
                 camera_path = json.load(f)

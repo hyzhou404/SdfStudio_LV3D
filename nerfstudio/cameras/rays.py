@@ -238,6 +238,9 @@ class RayBundle(TensorDataclass):
     """Additional metadata or data needed for interpolation, will mimic shape of rays"""
     times: Optional[TensorType[..., 1]] = None
     """Times at which rays are sampled"""
+    bbx = None
+    test_id = None
+    train_id = None
 
     def set_camera_indices(self, camera_index: int) -> None:
         """Sets all of the the camera indices to a specific camera index.
@@ -303,10 +306,10 @@ class RayBundle(TensorDataclass):
         shaped_raybundle_fields = self[..., None]
 
         frustums = Frustums(
-            origins=shaped_raybundle_fields.origins,  # [..., 1, 3]
-            directions=shaped_raybundle_fields.directions,  # [..., 1, 3]
-            starts=bin_starts,  # [..., num_samples, 1]
-            ends=bin_ends,  # [..., num_samples, 1]
+            origins=shaped_raybundle_fields.origins,  # [..., 1, 3] 光线的 origin
+            directions=shaped_raybundle_fields.directions,  # [..., 1, 3] 光线的 direction
+            starts=bin_starts,  # [..., num_samples, 1]    采样点的 start
+            ends=bin_ends,  # [..., num_samples, 1]        采样点的 end
             pixel_area=shaped_raybundle_fields.pixel_area,  # [..., 1, 1]
         )
 

@@ -163,6 +163,7 @@ class GeneralizedDataset(InputDataset):
                 break
 
         self.all_hw_same = all_hw_same
+        self.filenames = self._dataparser_outputs.image_filenames
 
     def get_data(self, image_idx: int) -> Dict:
         """Returns the ImageDataset data as a dictionary.

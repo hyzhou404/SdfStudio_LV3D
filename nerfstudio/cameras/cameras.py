@@ -105,6 +105,9 @@ class Cameras(TensorDataclass):
             ]
         ] = CameraType.PERSPECTIVE,
         times: Optional[TensorType["num_cameras"]] = None,
+        bounding_box = None,
+        train_idx = None,
+        test_idx = None,
     ):
         """Initializes the Cameras object.
 
@@ -122,6 +125,7 @@ class Cameras(TensorDataclass):
         self._field_custom_dimensions = {"camera_to_worlds": 2}
 
         self.camera_to_worlds = camera_to_worlds
+        self.bbx = bounding_box
 
         # fx fy calculation
         self.fx = self._init_get_fc_xy(fx, "fx")  # @dataclass's post_init will take care of broadcasting
@@ -139,6 +143,12 @@ class Cameras(TensorDataclass):
         self.width = self._init_get_height_width(width, self.cx)
         self.camera_type = self._init_get_camera_type(camera_type)
         self.times = self._init_get_times(times)
+
+        ## For Bounding Box
+        self.bbx = bounding_box
+        self.train_idx = train_idx
+        self.test_idx =  test_idx
+
 
         self.__post_init__()  # This will do the dataclass post_init and broadcast all the tensors
 
@@ -445,7 +455,9 @@ class Cameras(TensorDataclass):
         raybundle = cameras._generate_rays_from_coords(
             camera_indices, coords, camera_opt_to_camera, distortion_params_delta, disable_distortion=disable_distortion
         )
-
+        raybundle.train_id = cameras.train_idx
+        raybundle.test_id = cameras.test_idx
+        raybundle.bbx = cameras.bbx
         # If we have mandated that we don't keep the shape, then we flatten
         if keep_shape is False:
             raybundle = raybundle.flatten()
@@ -686,7 +698,7 @@ class Cameras(TensorDataclass):
 
         times = self.times[camera_indices, 0] if self.times is not None else None
 
-        return RayBundle(
+        raybundle = RayBundle(
             origins=origins,
             directions=directions,
             pixel_area=pixel_area,
@@ -694,6 +706,9 @@ class Cameras(TensorDataclass):
             directions_norm=directions_norm,
             times=times,
         )
+
+        return raybundle
+
 
     def to_json(
         self, camera_idx: int, image: Optional[TensorType["height", "width", 2]] = None, max_size: Optional[int] = None

@@ -51,6 +51,7 @@ class UniSurfModelConfig(SurfaceModelConfig):
     """number of up sample step, 1 for simple coarse-to-fine sampling"""
     perturb: bool = True
     """use to use perturb for the sampled points"""
+    inference_dataset = "off"
 
 
 class UniSurfModel(SurfaceModel):

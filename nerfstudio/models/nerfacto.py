@@ -78,7 +78,8 @@ class NerfactoModelConfig(ModelConfig):
     """Size of the hashmap for the base mlp"""
     num_proposal_samples_per_ray: Tuple[int] = (256, 96)
     """Number of samples per ray for the proposal network."""
-    num_nerf_samples_per_ray: int = 48
+    # num_nerf_samples_per_ray: int = 48
+    num_nerf_samples_per_ray: int = 64
     """Number of samples per ray for the nerf network."""
     proposal_update_every: int = 5
     """Sample every n steps after the warmup"""
@@ -105,8 +106,10 @@ class NerfactoModelConfig(ModelConfig):
     """Predicted normal loss multiplier."""
     use_proposal_weight_anneal: bool = True
     """Whether to use proposal weight annealing."""
-    use_average_appearance_embedding: bool = True
+    use_average_appearance_embedding: bool = False
     """Whether to use average appearance embedding or zeros for inference."""
+    use_individual_appearance_embedding: bool = True
+    """Whether to use individual appearance embedding or zeros for inference."""
     proposal_weights_anneal_slope: float = 10.0
     """Slope of the annealing function for the proposal weights."""
     proposal_weights_anneal_max_num_iters: int = 1000
@@ -115,6 +118,8 @@ class NerfactoModelConfig(ModelConfig):
     """Whether use single jitter or not for the proposal networks."""
     predict_normals: bool = False
     """Whether to predict normals or not."""
+    inference_dataset: Literal["off", "trainset", "testset"] = "off"
+    """When in inference, which dataset will be loaded."""
 
 
 class NerfactoModel(Model):
@@ -142,6 +147,8 @@ class NerfactoModel(Model):
             num_images=self.num_train_data,
             use_pred_normals=self.config.predict_normals,
             use_average_appearance_embedding=self.config.use_average_appearance_embedding,
+            use_individual_appearance_embedding=self.config.use_individual_appearance_embedding,
+            inference_dataset = self.config.inference_dataset
         )
 
         self.density_fns = []
@@ -190,7 +197,7 @@ class NerfactoModel(Model):
         )
         self.renderer_rgb = RGBRenderer(background_color=background_color)
         self.renderer_accumulation = AccumulationRenderer()
-        self.renderer_depth = DepthRenderer()
+        self.renderer_depth = DepthRenderer(method='expected')
         self.renderer_normals = NormalsRenderer()
 
         # losses
@@ -200,6 +207,9 @@ class NerfactoModel(Model):
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity()
+
+        ## filename_index
+        self.img_filename = None
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = {}
@@ -253,6 +263,7 @@ class NerfactoModel(Model):
             "rgb": rgb,
             "accumulation": accumulation,
             "depth": depth,
+            "weight":weights,
         }
 
         if self.config.predict_normals:
@@ -333,6 +344,7 @@ class NerfactoModel(Model):
         psnr = self.psnr(image, rgb)
         ssim = self.ssim(image, rgb)
         lpips = self.lpips(image, rgb)
+
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore

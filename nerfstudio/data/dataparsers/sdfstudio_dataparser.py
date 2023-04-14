@@ -236,9 +236,10 @@ class SDFStudio(DataParser):
 
             if self.config.include_mono_prior:
                 assert meta["has_mono_prior"]
-                # load mono depth
-                depth = np.load(self.config.data / frame["mono_depth_path"])
+                # load mono depth ominidata depth scale is 1 ,we should expand it to 6 for a better initialization
+                depth = np.load(self.config.data / frame["mono_depth_path"]) * (meta["scene_box"]["far"] - meta["scene_box"]["near"])
                 depth_images.append(torch.from_numpy(depth).float())
+                print(f"Depth Scale {depth.max()}")
 
                 # load mono normal
                 normal = np.load(self.config.data / frame["mono_normal_path"])

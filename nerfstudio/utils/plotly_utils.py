@@ -439,6 +439,7 @@ def get_frustum_points(
     frustum = frustum.flatten()
     pts = frustum.get_positions()
 
+
     return go.Scatter3d(
         x=pts[..., 0],
         y=pts[..., 1],
@@ -551,3 +552,76 @@ def get_camera_frustums(cameras: Cameras):
         json_ = cameras.to_json(camera_idx=camera_idx)
         print(json_)
     raise NotImplementedError
+
+def vis_3d_points(pts):
+
+    if isinstance(pts,torch.Tensor):
+        pts = pts.detach().cpu().numpy()
+    fig = go.Figure()
+    for i in range(pts.shape[0]):
+        fig.add_trace(
+                go.Scatter3d(x = pts[i,list(range(0,245,3)),0],
+                             y = pts[i,list(range(0,245,3)),1],
+                             z = pts[i,list(range(0,245,3)),2],
+                            mode="markers+lines",
+                            marker=dict(
+                                size=2,
+                                color="green",
+                                opacity=1,
+                            ),
+                           line=dict(
+                              color="blue"
+                           ),
+                    name=f"Frustums -> Positions{i}",
+                )
+            )
+
+    fig.write_html("3d_pts.html")
+    return
+
+def draw_bbx(vertices,filename = None):
+    vertices = vertices.squeeze()
+    num_bbx = vertices.shape[0]
+    fig = go.Figure()
+    # self.max_boarder = vertices.max()
+    ## i, j and k give the vertices of triangles (代表了连接顺序) 发现0123 0257 4567是一个面
+    ## 每次取出 i j,k 的元素组成一个三角形，因此012 123 两个三角形组成了长方体的一个面
+    i = [0, 3, 2, 5, 4, 5, 1, 1,3,3,1,1]
+    j = [1, 2, 5, 0, 5, 6, 6, 6,7,7,5,5]
+    k = [2, 1, 7, 2, 6, 7, 4, 3,2,6,0,4]
+    for idx in range(num_bbx):
+        fig.add_trace(
+            go.Mesh3d(
+            x = vertices[idx,:,0],
+            y = vertices[idx,:,1],
+            z = vertices[idx,:,2],
+            i = i,
+            j = j,
+            k = k,
+            opacity=0.1,
+            color ='blue',
+            name = f"bbx_{idx}"
+            )
+        )
+    fig.write_html("Vis_bbx.html")
+
+def draw_rays_near_far( rays_o, nears, fars, output_name="vis_intersection.html", indices=None):
+    if len(indices) < 5:
+        return
+    idx = indices.squeeze()[:5]
+    fig = go.Figure()
+    pts_nears = nears[idx]
+    pts_fars = fars[idx]
+    # rays_o = rays_o[idx]
+    # pts = torch.stack((rays_o,pts_nears,pts_fars),dim=1)
+    pts = torch.stack((pts_nears, pts_fars), dim=1)
+    if isinstance(pts, torch.Tensor):
+        pts = pts.detach().cpu().numpy()
+
+    for i in range(len(idx)):
+        fig.add_trace(
+            go.Scatter3d(x=pts[i, :, 0], y=pts[i, :, 1], z=pts[i, :, 2],
+                         mode='markers+lines',
+                         marker=dict(size=2)
+                         )
+        )

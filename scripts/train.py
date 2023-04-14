@@ -229,7 +229,8 @@ def main(config: cfg.Config) -> None:
 
     # print and save config
     config.print_to_terminal()
-    config.save_config()
+    if config.Debug_mode == False:
+        config.save_config()
 
     launch(
         main_func=train_loop,

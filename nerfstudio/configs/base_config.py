@@ -202,6 +202,8 @@ class Config(PrintableConfig):
 
     output_dir: Path = Path("outputs")
     """relative or absolute output directory to save all checkpoints and logging"""
+    Debug_mode: bool = False
+    """if True donot create a directory to record """
     method_name: Optional[str] = None
     """Method name. Required to set in python or via cli"""
     experiment_name: Optional[str] = None

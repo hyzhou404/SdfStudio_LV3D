@@ -170,13 +170,22 @@ class Model(nn.Module):
             camera_ray_bundle: ray bundle to calculate outputs over
         """
         num_rays_per_chunk = self.config.eval_num_rays_per_chunk
+        if self.config.inference_dataset != "off":
+            self.field.inference_dataset = self.config.inference_dataset
         image_height, image_width = camera_ray_bundle.origins.shape[:2]
         num_rays = len(camera_ray_bundle)
         outputs_lists = defaultdict(list)
         for i in range(0, num_rays, num_rays_per_chunk):
             start_idx = i
             end_idx = i + num_rays_per_chunk
+            # start_idx = 340*1408+1000
+            # end_idx = 350*1408+1300
+            ## 对于 camear_ray_bundle 进行 shuffle
             ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
+            ray_bundle.bbx = camera_ray_bundle.bbx
+            ray_bundle.test_id = camera_ray_bundle.test_id
+            ray_bundle.train_id = camera_ray_bundle.train_id
+
             outputs = self.forward(ray_bundle=ray_bundle)
             for output_name, output in outputs.items():  # type: ignore
                 outputs_lists[output_name].append(output)

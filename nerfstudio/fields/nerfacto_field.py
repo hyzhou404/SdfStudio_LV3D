@@ -47,6 +47,8 @@ from nerfstudio.field_components.spatial_distortions import (
     SpatialDistortion,
 )
 from nerfstudio.fields.base_field import Field
+from nerfstudio.utils import plotly_utils as vis
+import plotly.graph_objects as go
 
 try:
     import tinycudann as tcnn
@@ -104,6 +106,8 @@ class TCNNNerfactoField(Field):
         num_semantic_classes: int = 100,
         use_pred_normals: bool = False,
         use_average_appearance_embedding: bool = False,
+        use_individual_appearance_embedding:bool = False,
+        inference_dataset = "off",
         spatial_distortion: Optional[SpatialDistortion] = None,
     ) -> None:
         super().__init__()
@@ -116,9 +120,12 @@ class TCNNNerfactoField(Field):
         self.appearance_embedding_dim = appearance_embedding_dim
         self.embedding_appearance = Embedding(self.num_images, self.appearance_embedding_dim)
         self.use_average_appearance_embedding = use_average_appearance_embedding
+        self.use_individual_appearance_embedding = use_individual_appearance_embedding
         self.use_transient_embedding = use_transient_embedding
         self.use_semantics = use_semantics
         self.use_pred_normals = use_pred_normals
+        self.inference_dataset = inference_dataset
+        self.testset_embedding_index = []
 
         base_res = 16
         features_per_level = 2
@@ -224,6 +231,8 @@ class TCNNNerfactoField(Field):
         """Computes and returns the densities."""
         if self.spatial_distortion is not None:
             positions = ray_samples.frustums.get_positions()
+            # fig = go.Figure(data = [vis.get_frustum_points(ray_samples.frustums)])
+            # fig.write_html("pts.html")
             positions = self.spatial_distortion(positions)
             positions = (positions + 2.0) / 4.0
         else:
@@ -256,12 +265,23 @@ class TCNNNerfactoField(Field):
 
         # appearance
         if self.training:
-            embedded_appearance = self.embedding_appearance(camera_indices)
+            embedded_appearance = self.embedding_appearance(camera_indices)  ##[N_rays, N_samples, 32]
         else:
             if self.use_average_appearance_embedding:
                 embedded_appearance = torch.ones(
                     (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device
                 ) * self.embedding_appearance.mean(dim=0)
+            elif self.use_individual_appearance_embedding and self.inference_dataset =="trainset":
+                embedded_appearance = torch.ones(
+                    (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device
+                ) * self.embedding_appearance(camera_indices)
+
+            elif self.use_individual_appearance_embedding and self.inference_dataset == "testset":
+                 Testset_embedding_index = torch.tensor(self.testset_embedding_index).to('cuda')
+                 test_id = Testset_embedding_index[camera_indices[0][0]]
+                 test_id = test_id.expand_as(camera_indices)
+                 latent_code = 0.5* (self.embedding_appearance(test_id)+self.embedding_appearance(test_id-2))  ## 将两个左目的 embedding 进行average
+                 embedded_appearance = torch.ones((*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device) * latent_code
             else:
                 embedded_appearance = torch.zeros(
                     (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device

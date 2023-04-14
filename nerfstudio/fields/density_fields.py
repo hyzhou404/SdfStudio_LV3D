@@ -98,8 +98,9 @@ class HashMLPDensityField(Field):
 
     def get_density(self, ray_samples: RaySamples):
         if self.spatial_distortion is not None:
-            positions = self.spatial_distortion(ray_samples.frustums.get_positions())
-            positions = (positions + 2.0) / 4.0
+            positions = ray_samples.frustums.get_positions()
+            positions = self.spatial_distortion(positions)  ## 经过mipnerf360 的 contract 之后，bounded 在【-2,2】范围之内
+            positions = (positions + 2.0) / 4.0   ## bound to [0,1]
         else:
             positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
         positions_flat = positions.view(-1, 3)
