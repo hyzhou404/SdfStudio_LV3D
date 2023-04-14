@@ -33,7 +33,7 @@ class ExtractMesh:
     # Path to config YAML file.
     load_config: Path
     # Marching cube resolution.
-    resolution: int = 1024
+    resolution: int = 512
     # Name of the output file.
     output_path: Path = Path("output.ply")
     # Whether to simplify the mesh.
@@ -41,9 +41,9 @@ class ExtractMesh:
     # extract the mesh using occupancy field (unisurf) or SDF, default sdf
     is_occupancy: bool = False
     """Minimum of the bounding box."""
-    bounding_box_min: Tuple[float, float, float] = (-1.0, -1.0, -1.0)
+    bounding_box_min: Tuple[float, float, float] = (-6.0, -6.0, -6.0)
     """Maximum of the bounding box."""
-    bounding_box_max: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    bounding_box_max: Tuple[float, float, float] = (6.0, 6.0, 6.0)
     """marching cube threshold"""
     marching_cube_threshold: float = 0.0
     """create visibility mask"""

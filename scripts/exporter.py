@@ -175,7 +175,7 @@ class ExportPoissonMesh(Exporter):
     Export a mesh using poisson surface reconstruction.
     """
 
-    num_points: int = 1000000
+    num_points: int = 5000000
     """Number of points to generate. May result in less if outlier removal is used."""
     remove_outliers: bool = True
     """Remove outliers from the point cloud."""
@@ -185,17 +185,17 @@ class ExportPoissonMesh(Exporter):
     """Name of the RGB output."""
     normal_method: Literal["open3d", "model_output"] = "model_output"
     """Method to estimate normals with."""
-    normal_output_name: str = "normals"
+    normal_output_name: str = "normal"
     """Name of the normal output."""
     save_point_cloud: bool = False
     """Whether to save the point cloud."""
     use_bounding_box: bool = True
     """Only query points within the bounding box"""
-    bounding_box_min: Tuple[float, float, float] = (-1, -1, -1)
+    bounding_box_min: Tuple[float, float, float] = (-3, -3, 0)
     """Minimum of the bounding box, used if use_bounding_box is True."""
-    bounding_box_max: Tuple[float, float, float] = (1, 1, 1)
+    bounding_box_max: Tuple[float, float, float] = (3, 3, 2)
     """Minimum of the bounding box, used if use_bounding_box is True."""
-    num_rays_per_batch: int = 32768
+    num_rays_per_batch: int = 4096
     """Number of rays to evaluate per batch. Decrease if you run out of memory."""
     texture_method: Literal["point_cloud", "nerf"] = "nerf"
     """Method to texture the mesh with. Either 'point_cloud' or 'nerf'."""
@@ -218,8 +218,13 @@ class ExportPoissonMesh(Exporter):
             directions = torch.ones_like(origins)
             pixel_area = torch.ones_like(origins[..., :1])
             camera_indices = torch.zeros_like(origins[..., :1])
+            directions_norm = torch.norm(directions, dim=-1, keepdim=True)
             ray_bundle = RayBundle(
-                origins=origins, directions=directions, pixel_area=pixel_area, camera_indices=camera_indices
+                origins=origins,
+                directions=directions,
+                directions_norm=directions_norm,
+                pixel_area=pixel_area,
+                camera_indices=camera_indices
             )
             outputs = pipeline.model(ray_bundle)
             if self.normal_output_name not in outputs:

@@ -18,6 +18,7 @@ Implementation of Base surface model.
 
 from __future__ import annotations
 
+import random
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Type
@@ -75,7 +76,7 @@ class SurfaceModelConfig(ModelConfig):
     """How far along the ray to stop sampling."""
     far_plane_bg: float = 1000.0
     """How far along the ray to stop sampling of the background model."""
-    background_color: Literal["random", "last_sample", "white", "black"] = "black"
+    background_color: Literal["random", "last_sample", "white", "black"] = "white"
     """Whether to randomize the background color."""
     use_average_appearance_embedding: bool = False
     """Whether to use average appearance embedding or zeros for inference."""
@@ -472,6 +473,19 @@ class SurfaceModel(Model):
             combined_depth = torch.cat([depth_gt[..., None], depth_pred], dim=1)
             combined_depth = colormaps.apply_depth_colormap(combined_depth)
         else:
+            # ray_bundle = batch['ray_bundle']
+            # depth = outputs['depth']
+            # for _ in range(40):
+            #     i = random.randint(0, depth.shape[0])
+            #     j = random.randint(0, depth.shape[1])
+            #     ray = ray_bundle[i, j]
+            #     eps = 0.05
+            #     xyzs = []
+            #     for k in [-1, 0, 1]:
+            #         xyzs.append(ray.origins + (depth[i, j] + k*eps) * ray.directions)
+            #     xyzs = torch.stack(xyzs)
+            #     print(self.field.forward_geonetwork(xyzs)[:, 0].detach().cpu())
+            # exit(0)
             depth = colormaps.apply_depth_colormap(
                 outputs["depth"],
                 accumulation=outputs["accumulation"],
