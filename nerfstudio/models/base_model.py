@@ -197,6 +197,37 @@ class Model(nn.Module):
             outputs[output_name] = torch.cat(outputs_list).view(image_height, image_width, -1)  # type: ignore
         return outputs
 
+    @torch.no_grad()
+    def get_outputs_for_fixed_raybundle(self, camera_ray_bundle: RayBundle,pixel_x=None, pixel_y = None) -> Dict[str, torch.Tensor]:
+
+        if self.config.inference_dataset != "off":
+            self.field.inference_dataset = self.config.inference_dataset
+        image_height, image_width = camera_ray_bundle.origins.shape[:2]
+        num_rays = len(camera_ray_bundle)
+        outputs_lists = defaultdict(list)
+
+        selected_index = pixel_y * image_width + pixel_x
+        BBx = camera_ray_bundle.bbx
+        Test_id = camera_ray_bundle.test_id
+        Train_id = camera_ray_bundle.train_id
+        ## 对于 camear_ray_bundle 进行 shuffle
+        camera_ray_bundle = camera_ray_bundle.flatten()
+        ray_bundle = camera_ray_bundle[selected_index]
+        ray_bundle.bbx = BBx
+        ray_bundle.test_id = Test_id
+        ray_bundle.train_id = Train_id
+
+        outputs = self.forward(ray_bundle=ray_bundle)
+        for output_name, output in outputs.items():  # type: ignore
+            outputs_lists[output_name].append(output)
+        outputs = {}
+        for output_name, outputs_list in outputs_lists.items():
+            if not torch.is_tensor(outputs_list[0]):
+                # TODO: handle lists of tensors as well
+                continue
+            outputs[output_name] = torch.cat(outputs_list).view(image_height, image_width, -1)  # type: ignore
+        return outputs
+
     @abstractmethod
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]

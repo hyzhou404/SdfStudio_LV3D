@@ -45,12 +45,13 @@ class Vis():
 
     def draw_ray(self, pts, output_name="vis_ray.html", selected_index=[-1]):
         random_idx = np.random.randint(low=0, high=pts.shape[0], size=50)
-        random_idx[0] = selected_index[0]
 
         if isinstance(pts, torch.Tensor):
             pts = pts.detach().cpu().numpy()
         if isinstance(selected_index,torch.Tensor):
             selected_index = selected_index.detach().cpu().numpy()
+
+        random_idx[:10] = selected_index[0:100:10]
 
         for i in random_idx:
             if i in selected_index:
@@ -118,6 +119,27 @@ class Vis():
                              marker=dict(size=2),
                              line=dict(
                                  color=color
+                             )
+                             )
+            )
+
+        self.vis(outfile=output_name)
+
+    def draw_all_ray(self, pts, output_name="vis_ray.html"):
+
+        if isinstance(pts, torch.Tensor):
+            pts = pts.detach().cpu().numpy()
+
+        for i in range(pts.shape[0]):
+            self.fig.add_trace(
+                go.Scatter3d(x=pts[i, 0:-10:2, 0],
+                             y=pts[i, 0:-10:2, 1],
+                             z=pts[i, 0:-10:2, 2],
+                             mode='markers+lines',
+                             name=f"Ray_{i}",
+                             marker=dict(size=2),
+                             line=dict(
+                                 color="green"
                              )
                              )
             )

@@ -21,7 +21,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
-
+import numpy as np
 import torch
 import tyro
 from rich.progress import Console
@@ -405,11 +405,23 @@ class VanillaDataManager(DataManager):  # pylint: disable=abstract-method
             num_workers=self.world_size * 2,
             shuffle=False,
         )
+        self.eval_dataloader.cameras.bbx = self.train_dataset.cameras.bbx
+        self.eval_dataloader.cameras.test_idx = self.train_dataset.cameras.test_idx
+        self.eval_dataloader.cameras.train_idx = self.train_dataset.cameras.train_idx
+        # print("done")
 
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
-        image_batch = next(self.iter_train_image_dataloader)
+        image_batch = next(self.iter_train_image_dataloader).copy()
+
+        ## 实现每次训练 仅仅从一张图像进行随机采样的 功能. Fixed image + Random Ray
+        # train_idx = image_batch["image_idx"].detach().cpu().numpy().tolist()
+        # random_idx = np.random.choice(train_idx)
+        # image_batch['image_idx'] = image_batch['image_idx'][random_idx].unsqueeze(0)
+        # image_batch['image'] = image_batch['image'][random_idx,...].unsqueeze(0)
+        # print(f"Current Image idx is {image_batch['image_idx'].detach().cpu().numpy()}")
+
         batch = self.train_pixel_sampler.sample(image_batch)
         ray_indices = batch["indices"]
         ray_bundle = self.train_ray_generator(ray_indices)

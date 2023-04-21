@@ -173,7 +173,7 @@ class Nerfstudio(DataParser):
             i_train = []
             for i in range(0, num_images, 2):
                 if i % 4 == 0:
-                    i_train.extend([i,i+1,i+2])
+                    i_train.extend([i,i+1])
             i_train = np.array(i_train)
             num_train_images = len(i_train)
             i_eval = np.setdiff1d(i_all, i_train)[:-2]  # Demo kitti360
@@ -270,16 +270,19 @@ class Nerfstudio(DataParser):
             data_dir = '/data/datasets/KITTI-360/'
             instance_path = os.path.join(data_dir, 'data_2d_semantics', 'train',
                                          '2013_05_28_drive_0000_sync', 'image_00/instance')
-            for idx in range(3353, 3353 + 10, 1):
+            for idx in range(400, 400 + 40, 1):
                 img_file = os.path.join(instance_path, "{:010d}.png".format(idx))
                 instance_imgs.append(cv.imread(img_file, -1))
 
+            ## 这里的 bbx 的坐标都是相当于第一帧相机来说的（第一帧相机是世界坐标系）
             bbx_root = os.path.join(data_dir, 'data_3d_bboxes')
             self.annotation_3d = Annotation3D(os.path.join(bbx_root, 'train'), '2013_05_28_drive_0000_sync')
             all_bbxes = self.load_bbx(instance_imgs=instance_imgs, bbx2w=bbx2world,
                                       scale=scale_factor * self.config.scale_factor,
                                       diff_centor_translation=diff_mean_poses)
 
+            ''' 将3D 的bbx 投影到2D 验证bbx 是否正确'''
+            # all_bbxes = self.load_bbx_for_test(instance_imgs=instance_imgs, bbx2w=bbx2world)
             # self.project2Dbbx(bbx=all_bbxes, img_idx=0, f=fx, cx=cx, cy=cy, img_file=image_filenames)
         else:
             print(f"BBx Unabled!")
@@ -358,6 +361,8 @@ class Nerfstudio(DataParser):
 
             vertices_w = np.array(vertices)[..., None]  ## 世界系下的 vertices
             vertices_c = np.matmul(R_w2c[None, None, ...], vertices_w) + t_w2c[None, None, ...]  ## 当前图像的 相机系下的 vertices
+
+            ## 在project 到 2D 的时候，不用使用. 在场景训练的时候才使用
             vertices_c = torch.from_numpy(vertices_c) - diff_centor_translation[...,None]       ## Centor Pose
             all_bbxes.append(vertices_c * scale)
         return all_bbxes
@@ -381,5 +386,29 @@ class Nerfstudio(DataParser):
             top = int(min(uv[:, 1]))
             bottom = int(max(uv[:, 1]))
             img[top:bottom, left:right] = 0
+            # print(f"left:{left},right:{right},top{top},bottom:{bottom}\n")
         cv.imwrite('projectbbx.png', np.concatenate((img , bbx_img ), axis=0))
         exit()
+
+    def load_bbx_for_test(self,instance_imgs = None,bbx2w =None):
+        num_bbx = len(instance_imgs)
+
+        w2c = np.linalg.inv(bbx2w)
+        R_w2c = w2c[:3, :3]
+        t_w2c = w2c[:3, 3:]
+        all_bbxes = []
+        for img_id in range(num_bbx):
+            instance_map = instance_imgs[img_id]
+            car_global = instance_map[(instance_map > 26 * 1000) & (instance_map < 27 * 1000)]  ## Car 的global id 在26000-27000之间
+            set_idx = np.unique(car_global)
+
+            ## 找出该张图像对应的bbx 的 8个顶点（w系）
+            vertices = []
+            for idx in set_idx:
+                vertice = self.annotation_3d.objects[idx][-1].vertices
+                vertices.append(vertice)
+
+            vertices_w = np.array(vertices)[..., None]  ## 世界系下的 vertices
+            vertices_c = np.matmul(R_w2c[None, None, ...], vertices_w) + t_w2c[None, None, ...]  ## 当前图像的 相机系下的 vertices
+            all_bbxes.append(vertices_c)
+        return all_bbxes

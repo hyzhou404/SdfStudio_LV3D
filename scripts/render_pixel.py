@@ -154,54 +154,59 @@ class RenderDatasets():
         render_depth = []
         render_normal = []
 
+        ## Debug 的特定区域的代码. 像素坐标系（y,x）
+        debug_img_idx = 14
+        # p_x = np.array([100, 450, 560, 680, 650, 1010,505,530])
+        # p_y = np.array([100,120,240,200,300,200,195,200])
+        p_x = np.array([100, 450, 560, 1020, 650,150])
+        p_y = np.array([300, 260, 260, 200, 50,280])
+        draw_image = DataCache.image_cache[debug_img_idx].detach().cpu().numpy() * 255.0
+        p = np.stack([p_x, p_y], axis=-1)
+        for point in p:
+            cv2.circle(draw_image, point, radius=5, color=(0, 0, 255), thickness=4)
+        cv2.imwrite(os.path.join("./", "draw_point.png"), draw_image)
 
+        p_x = torch.from_numpy(p_x).to('cuda')
+        p_y = torch.from_numpy(p_y).to('cuda')
         with progress:
-            for camera_idx in progress.track(range(cameras.size), description=""):
-                camera_ray_bundle = cameras.generate_rays(camera_indices=camera_idx)
-                with torch.no_grad():
-                    outputs = pipeline.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
-                for rendered_output_name in self.rendered_output_names:
-                    if rendered_output_name not in outputs:
-                        CONSOLE.rule("Error", style="red")
-                        CONSOLE.print(f"Could not find {rendered_output_name} in the model outputs", justify="center")
-                        CONSOLE.print(f"Please set --rendered_output_name to one of: {outputs.keys()}",
-                                      justify="center")
-                        sys.exit(1)
-                    output_image = outputs[rendered_output_name].cpu().numpy()
-                    if rendered_output_name == 'rgb':
+            camera_idx = 14
+            camera_ray_bundle = cameras.generate_rays(camera_indices=camera_idx)
+            with torch.no_grad():
+                # outputs = pipeline.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+                ## Debug 特定光线的 pts
+                outputs = pipeline.model.get_outputs_for_fixed_raybundle(camera_ray_bundle,pixel_x=p_x,pixel_y=p_y)
+            for rendered_output_name in self.rendered_output_names:
+                if rendered_output_name not in outputs:
+                    CONSOLE.rule("Error", style="red")
+                    CONSOLE.print(f"Could not find {rendered_output_name} in the model outputs", justify="center")
+                    CONSOLE.print(f"Please set --rendered_output_name to one of: {outputs.keys()}",
+                                  justify="center")
+                    sys.exit(1)
+                output_image = outputs[rendered_output_name].cpu().numpy()
+                if rendered_output_name == 'rgb':
                         render_image.append(output_image)
-                    elif rendered_output_name == 'depth':
+                elif rendered_output_name == 'depth':
                         render_depth.append(output_image)
-                    elif rendered_output_name == 'normal':
+                elif rendered_output_name == 'normal':
                         render_normal.append(output_image)
         CONSOLE.print("[bold green]Rendering Images Finished")
 
         ''' Output rgb depth and normal image'''
         sum_psnr = 0
-        for i,image in sorted(DataCache.image_cache.items()):
-            if self.is_leaderboard and self.task == 'testset':
-                media.write_image(self.root_dir /"render_rgb"/ test_file[i], render_image[i])
-            else:
-                media.write_image(self.root_dir / "render_rgb" / f'{self.task}_{i:02d}_redner_rgb.png', render_image[i])
-                media.write_image(self.root_dir/"gt_rgb" / f'{self.task}_{i:02d}_gtrgb.png', (image.detach().cpu().numpy()))
-                # _,ssim_matrix = self.ssim(render_image[i],image.detach().cpu().numpy(),multichannel=True,full=True)
-                # self.generate_errorMap(ssim_matrix,i)
-                self.generate_MSE_map(image.detach().cpu().numpy(),render_image[i],i)
-                psnr = -10. * np.log10(np.mean(np.square(image.detach().cpu().numpy() - render_image[i])))
+        image = DataCache.image_cache[debug_img_idx]
+        if self.is_leaderboard and self.task == 'testset':
+            media.write_image(self.root_dir /"render_rgb"/ test_file[0], render_image[0])
+        else:
+            media.write_image(self.root_dir / "render_rgb" / f'{self.task}_{0:02d}_redner_rgb.png', render_image[0])
+            media.write_image(self.root_dir/"gt_rgb" / f'{self.task}_{0:02d}_gtrgb.png', (image.detach().cpu().numpy()))
+            # _,ssim_matrix = self.ssim(render_image[i],image.detach().cpu().numpy(),multichannel=True,full=True)
+            # self.generate_errorMap(ssim_matrix,i)
+            self.generate_MSE_map(image.detach().cpu().numpy(),render_image[0],0)
+            psnr = -10. * np.log10(np.mean(np.square(image.detach().cpu().numpy() - render_image[0])))
+            sum_psnr += psnr
+            print("{} Mode image {} PSNR:{} ".format(self.task,debug_img_idx,psnr))
 
-                # ## 求出限制 汽车特定区域的 PSNR
-                # os.makedirs(self.root_dir / "car_mse", exist_ok=True)
-                # left, right, top, bottom = 450, 670, 182, 292
-                # backup_img = image.detach().cpu().numpy()
-                # ori_img = render_image[i].copy()
-                # ori_img[top:bottom, left:right] =  backup_img[top:bottom, left:right]
-                # psnr_car = -10. * np.log10(np.mean(np.square(ori_img - render_image[i])))
-                # media.write_image(self.root_dir / "car_mse"/f'{self.task}_{i:02d}_car.png',ori_img)
 
-                sum_psnr += psnr
-                print("{} Mode image {} PSNR:{} ".format(self.task,i,psnr))
-
-        print(f"Average PSNR:{sum_psnr/len(DataCache.image_cache)}")
 
         for i in range(len(render_depth)):
             pred_depth = render_depth[i].squeeze(2)

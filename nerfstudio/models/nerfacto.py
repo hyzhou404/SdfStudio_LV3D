@@ -78,8 +78,9 @@ class NerfactoModelConfig(ModelConfig):
     """Size of the hashmap for the base mlp"""
     num_proposal_samples_per_ray: Tuple[int] = (256, 96)
     """Number of samples per ray for the proposal network."""
-    # num_nerf_samples_per_ray: int = 48
-    num_nerf_samples_per_ray: int = 64
+    # num_nerf_samples_per_ray: int = 32
+    num_nerf_samples_per_ray: int = 48
+    # num_nerf_samples_per_ray: int = 64 (效果PSNR 略微降低)
     """Number of samples per ray for the nerf network."""
     proposal_update_every: int = 5
     """Sample every n steps after the warmup"""

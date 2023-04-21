@@ -257,6 +257,12 @@ class VanillaPipeline(Pipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         ray_bundle, batch = self.datamanager.next_train(step)
+
+        ## 为ray_bundle 添加bbx test_id train_id 等属性
+        ray_bundle.bbx = self.datamanager.train_dataset.cameras.bbx
+        ray_bundle.test_id = self.datamanager.train_dataset.cameras.test_idx
+        ray_bundle.train_id = self.datamanager.train_dataset.cameras.train_idx
+
         model_outputs = self._model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 

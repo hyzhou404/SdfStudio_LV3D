@@ -123,43 +123,50 @@ class SpacedSampler(Sampler):
         ## 先把 bbx 的交点通过 spacing_fn 映射到【0,1】 之间，然后对映射回去的区间点采样40个点，这样会造成在【0,1】 之间的并不是uniform 采样，然后
         ## 按照原函数的 编写，和其他点一样 通过 spacing_fn_inv 映射回 Eucler 空间
 
-
-        new_euclidean_bins= self.sampling_in_bbx(z_vals=euclidean_bins,rays_o=ray_bundle.origins, rays_d=ray_bundle.directions,bbx=ray_bundle.bbx)
+        # euclidean_bins= self.sampling_in_bbx(z_vals=euclidean_bins,
+        #                                      rays_o=ray_bundle.origins,
+        #                                      rays_d=ray_bundle.directions,
+        #                                      bbx=ray_bundle.bbx,
+        #                                      camear_index=ray_bundle.camera_indices,
+        #                                      test_id = ray_bundle.test_id,
+        #                                      train_id = ray_bundle.train_id)
 
 
         ray_samples = ray_bundle.get_ray_samples(
-            # bin_starts=euclidean_bins[..., :-1, None],
-            # bin_ends=euclidean_bins[..., 1:, None],
-            bin_starts=new_euclidean_bins[..., :-1, None],
-            bin_ends=new_euclidean_bins[..., 1:, None],
+            bin_starts=euclidean_bins[..., :-1, None],
+            bin_ends=euclidean_bins[..., 1:, None],
             spacing_starts=bins[..., :-1, None],
             spacing_ends=bins[..., 1:, None],
             spacing_to_euclidean_fn=spacing_to_euclidean_fn,
         )
 
-        # 随机采样出一些 光线，如果和bbx 相交用红线表示，否则用蓝色表示
-        # pts = ray_samples.frustums.get_positions()
-        # random_idx = np.random.randint(low=0, high=pts.shape[0], size=50)
-        # vis = Vis()
-        # vis.draw_bbx(ray_bundle.bbx[2].detach().cpu().numpy())
-        # vis.draw_random_ray(pts[:,:-6,:],selected_index=inter_ray_index,pts_id=random_idx)
-
         return ray_samples
 
-    def sampling_in_bbx(self,z_vals,rays_d,rays_o,bbx):
+    '''
+    def sampling_in_bbx(self,z_vals,rays_d,rays_o,bbx,camear_index,test_id,train_id):
         orign_pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
         if self.training:
-            current_bbx = bbx[2]
-        # vis = Vis()
+            current_image_index = train_id[camear_index[0][0]]
+            current_bbx = bbx[current_image_index // 2]
+        else:
+            current_image_index = test_id[camear_index[0][0]]
+            current_bbx = bbx[current_image_index//2]
+
+        vis = Vis()
         # vis.draw_bbx(current_bbx.detach().cpu().numpy())
+        # vis.draw_all_ray(pts=orign_pts, output_name="coarsenet_before_ray.html")
 
         bbx_sampling_region = self.intersect_with_aabb(rays_o,rays_d,bbx_vertices=current_bbx,vis=vis)
         pts, inter_ray_indices = self.sample_bbx(bbx_sampling_region, rays_o, rays_d, orign_pts, old_z=z_vals)
 
+        fixed_z = (pts - rays_o[:, None, :]) / rays_d[:, None, :]
+        fixed_z = fixed_z[...,-1]
+
         # if inter_ray_indices.shape[0] > 1:
-        #     vis.draw_ray(pts=pts, output_name="coarse_ray.html",selected_index=inter_ray_indices)
+        #     vis.draw_all_ray(pts=pts, output_name="coarsenet_ray.html")
         #     print("Done!")
-        return pts[:,:,-1]
+
+        return fixed_z
 
     def sample_bbx(self, region, rays_o, rays_d, pts,old_z):
         region = torch.stack(region)
@@ -167,7 +174,7 @@ class SpacedSampler(Sampler):
         nears = region[:, :, 0]
         fars = region[:, :, 1]
         interval = fars - nears  ##[512,13]
-        ## 找出interval >1e-6 的区域，数组的索引
+        ## 找出interval >1e-6 的区域，数组的索引; 0.5 是 阈值
         mask = interval > 0.1
         indices = torch.nonzero(mask)  ## 二维数组，反映了第几条Ray 在哪一个bbx 内有 相交
         ## 如果一个Ray 和多个bbx 相交，只在第一个 bbx 进行多采样
@@ -177,18 +184,9 @@ class SpacedSampler(Sampler):
         ## 将需要重新生成采样点的 Ray 上的 采样点设置为0; indices[:, 0] 是相交Ray的id
         pts[indices[:, 0]] = 0
 
-        idx = torch.randperm(old_z.shape[1]-5)[:-45]
+        idx = torch.randperm(old_z.shape[1]-20)[:-30]  ## 不会随机舍去 最后的20个点，因为害怕背景的点被丢失
         new_z_vals = old_z[:,idx]
         selected_ray_index = []
-
-        # for idx in range(indices.shape[0]):  ## 逐次处理每一条Ray
-        #
-        #     Z_val = torch.linspace(nears[indices[idx, 0], indices[idx, 1]], fars[indices[idx, 0], indices[idx, 1]], 50).to('cuda')
-        #     Z_vals = torch.concat([Z_val, new_z_vals[indices[idx,0],:]], dim=0)
-        #     Z_vals = torch.sort(Z_vals,descending=False).values  ## 对Z排序
-        #
-        #     pts[indices[idx, 0]] = rays_o[indices[idx, 0], None, :] + rays_d[indices[idx, 0], None, :] * Z_vals[:, None]
-        #     selected_ray_index.append(indices[idx, 0])
 
         if indices.shape[0] > 0:
             nears = nears[indices[:,0],indices[:,1]].detach().cpu().numpy()
@@ -265,7 +263,7 @@ class SpacedSampler(Sampler):
             min_dim2_index = torch.argmin(dim1_subset[:, 1])
             new_a = torch.cat((new_a, dim1_subset[min_dim2_index].view(1, -1)))
         return new_a
-
+    '''
 
 class UniformSampler(SpacedSampler):
     """Sample uniformly along a ray
@@ -289,6 +287,7 @@ class UniformSampler(SpacedSampler):
             train_stratified=train_stratified,
             single_jitter=single_jitter,
         )
+
 
 
 class LinearDisparitySampler(SpacedSampler):
@@ -499,6 +498,18 @@ class PDFSampler(Sampler):
 
         euclidean_bins = ray_samples.spacing_to_euclidean_fn(bins)
 
+        ## 直接在fine 采样上给bbx 增加更多的采样点：
+        # if euclidean_bins.shape[1] == 49:
+        #     # print("Final PDF Sampling and Sampling in Bounding Box!")
+        #     euclidean_bins = self.sampling_in_bbx(z_vals=euclidean_bins,
+        #                                          rays_o=ray_bundle.origins,
+        #                                          rays_d=ray_bundle.directions,
+        #                                          bbx=ray_bundle.bbx,
+        #                                          camear_index=ray_bundle.camera_indices,
+        #                                          test_id = ray_bundle.test_id,
+        #                                          train_id = ray_bundle.train_id)
+
+
         ray_samples = ray_bundle.get_ray_samples(
             bin_starts=euclidean_bins[..., :-1, None],
             bin_ends=euclidean_bins[..., 1:, None],
@@ -509,6 +520,137 @@ class PDFSampler(Sampler):
 
         return ray_samples
 
+    '''
+    def sampling_in_bbx(self,z_vals,rays_d,rays_o,bbx,camear_index,test_id,train_id):
+        orign_pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
+        if self.training:
+            current_image_index = train_id[camear_index[0][0]]
+            current_bbx = bbx[current_image_index // 2]
+        else:
+            current_image_index = test_id[camear_index[0][0]]
+            current_bbx = bbx[current_image_index//2]
+
+        vis = Vis()
+        # vis.draw_bbx(current_bbx.detach().cpu().numpy())
+        # vis.draw_all_ray(orign_pts,output_name="before_process.html")
+
+        bbx_sampling_region = self.intersect_with_aabb(rays_o,rays_d,bbx_vertices=current_bbx,vis=vis)
+        pts, inter_ray_indices = self.sample_bbx(bbx_sampling_region, rays_o, rays_d, orign_pts, old_z=z_vals)
+
+        ## 返回的应该是采样点沿着光线的距离
+        fixed_z = (pts - rays_o[:, None, :]) / rays_d[:, None, :]
+        fixed_z = fixed_z[...,-1]
+
+        # vis = Vis()
+        # vis.draw_bbx(current_bbx.detach().cpu().numpy())
+        # new_pts = rays_o[:, None, :] + rays_d[:, None, :] * fixed_z[..., :, None]
+        # vis.draw_all_ray(new_pts, output_name="after_process.html")
+
+        exit()
+
+        return fixed_z
+
+    def sample_bbx(self, region, rays_o, rays_d, pts,old_z):
+        region = torch.stack(region)
+        region = torch.moveaxis(region, 1, 0)  ##[512,13,2]
+        nears = region[:, :, 0]
+        fars = region[:, :, 1]
+        interval = fars - nears  ##[512,13]
+
+        ## 找出interval >1e-6 的区域，数组的索引; 0.5 是 阈值
+        mask = interval > 0.1
+
+        indices = torch.nonzero(mask)  ## 二维数组，反映了第几条Ray 在哪一个bbx 内有 相交
+        ## 如果一个Ray 和多个bbx 相交，只在第一个 bbx 进行多采样
+        indices = self.deduplication_indices(indices).long() ## 显示转化为int64
+        interval = interval[mask]
+
+        ## 将需要重新生成采样点的 Ray 上的 采样点设置为0; indices[:, 0] 是相交Ray的id
+        pts[indices[:, 0]] = 0
+        torch.gather(pts)
+
+        retain_points_idx = torch.arange(old_z.shape[1]-10,old_z.shape[1])  ## 之后10个是 background点
+        idx = torch.randperm(old_z.shape[1]-10)[:19]  ## 在背景点之外的点，随机取19个点
+        new_z_vals = old_z[:,torch.concat([retain_points_idx,idx])]
+
+        selected_ray_index = []
+
+        if indices.shape[0] > 0:
+            nears = nears[indices[:,0],indices[:,1]].detach().cpu().numpy()
+            fars = fars[indices[:,0],indices[:,1]].detach().cpu().numpy()
+            z_val = np.linspace(nears,fars,20)
+            z_val = np.moveaxis(z_val,-1,0)
+            z_val = torch.from_numpy(z_val).to('cuda')
+            z_vals = torch.concat([z_val, new_z_vals[indices[:, 0], :]], dim=1)
+            z_vals = torch.sort(z_vals, descending=False,dim=1).values  ## 对Z排序
+
+            pts[indices[:, 0]] = rays_o[indices[:, 0], None, :] + rays_d[indices[:, 0], None, :] * z_vals[..., None]
+            selected_ray_index.append(indices[:, 0])
+
+        if len(selected_ray_index) > 0:
+            return pts, torch.stack(selected_ray_index).squeeze(0)
+        else:
+            return pts,torch.zeros(1)
+
+    def intersect_with_aabb(self, rays_o, rays_d, bbx_vertices,vis):
+        bbx_vertices = bbx_vertices.detach().cpu().numpy()
+        dir_fraction = 1.0 / (rays_d + 1e-6)
+        vis.draw_bbx(bbx_vertices)
+        bbx_sample_regions = []
+        bbx_vertices = bbx_vertices.squeeze(-1)
+        for idx in range(bbx_vertices.shape[0]):
+            aabb = np.array([
+                [min(bbx_vertices[idx, :, 0]), min(bbx_vertices[idx, :, 1]), min(bbx_vertices[idx, :, 2])],
+                [max(bbx_vertices[idx, :, 0]), max(bbx_vertices[idx, :, 1]), max(bbx_vertices[idx, :, 2])]
+            ])
+
+            # x
+            t1 = (aabb[0, 0] - rays_o[:, 0:1]) * dir_fraction[:, 0:1]
+            t2 = (aabb[1, 0] - rays_o[:, 0:1]) * dir_fraction[:, 0:1]
+            # y
+            t3 = (aabb[0, 1] - rays_o[:, 1:2]) * dir_fraction[:, 1:2]
+            t4 = (aabb[1, 1] - rays_o[:, 1:2]) * dir_fraction[:, 1:2]
+            # z
+            t5 = (aabb[0, 2] - rays_o[:, 2:3]) * dir_fraction[:, 2:3]
+            t6 = (aabb[1, 2] - rays_o[:, 2:3]) * dir_fraction[:, 2:3]
+
+            nears = torch.max(
+                torch.cat([torch.minimum(t1, t2), torch.minimum(t3, t4), torch.minimum(t5, t6)], dim=1), dim=1
+            ).values
+            fars = torch.min(
+                torch.cat([torch.maximum(t1, t2), torch.maximum(t3, t4), torch.maximum(t5, t6)], dim=1), dim=1
+            ).values
+
+            nears = torch.clamp(nears, min=0)  ##[batch_size]
+            fars = torch.maximum(fars, nears + 1e-6)
+
+            region = torch.stack([nears, fars], dim=1)
+            bbx_sample_regions.append(region)
+
+            ## 可视化出这个 intersection 和bbx 验证 是否正确
+            # intersections_near = rays_o + nears[:,None] * rays_d
+            # intersections_fars = rays_o + fars[:,None] * rays_d
+            # mask = fars-nears > 0.05
+            # inter_indices = torch.nonzero(mask)
+            # # if inter_indices.shape[0]>0:
+            # #     print("Have Intersection!")
+            #
+            # vis.draw_rays_near_far(rays_o = rays_o,nears=intersections_near,fars=intersections_fars,indices = inter_indices)
+
+        # vis.vis("inter_bbx.html")
+
+        return bbx_sample_regions
+
+    def deduplication_indices(self, a):
+        unique_first_dim = torch.unique(a[:, 0])
+        new_a = torch.empty((0, 2)).to('cuda')
+
+        for dim1 in unique_first_dim:
+            dim1_subset = a[a[:, 0] == dim1]
+            min_dim2_index = torch.argmin(dim1_subset[:, 1])
+            new_a = torch.cat((new_a, dim1_subset[min_dim2_index].view(1, -1)))
+        return new_a
+'''
 
 class VolumetricSampler(Sampler):
     """Sampler inspired by the one proposed in the Instant-NGP paper.
@@ -719,12 +861,22 @@ class ProposalNetworkSampler(Sampler):
 
         ## 可视化出 在 Proposal 之后的 采样点
         # pts = ray_samples.frustums.get_positions()
-        # random_idx = np.random.randint(low=0, high=pts.shape[0], size=50)
+        #
         # vis = Vis()
-        # vis.draw_bbx(ray_bundle.bbx[2].detach().cpu().numpy())
-        # vis.draw_ray(pts[:,:-1,:])
+        # if self.training:
+        #     current_image_index = ray_bundle.train_id[ray_bundle.camera_indices[0][0]]
+        #     current_bbx = ray_bundle.bbx[current_image_index // 2]
+        # else:
+        #     current_image_index = ray_bundle.test_id[ray_bundle.camera_indices[0][0]]
+        #     current_bbx = ray_bundle.bbx[current_image_index // 2]
+
+        # vis.draw_bbx(current_bbx.detach().cpu().numpy())
+        # vis.draw_all_ray(pts[:,:-1,:],output_name="after_process.html")
+
 
         return ray_samples, weights_list, ray_samples_list
+
+
 
 
 class ErrorBoundedSampler(Sampler):
