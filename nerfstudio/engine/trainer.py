@@ -137,6 +137,10 @@ class Trainer:
             num_iterations = self.config.trainer.max_num_iterations
             step = 0
             for step in range(self._start_step, self._start_step + num_iterations):
+                # if step >= 0:
+                #     print('Early Stop!')
+                #     self.save_checkpoint(step)
+                #     exit(0)
                 with TimeWriter(writer, EventName.ITER_TRAIN_TIME, step=step) as train_t:
 
                     self.pipeline.train()

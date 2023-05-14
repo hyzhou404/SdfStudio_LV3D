@@ -257,7 +257,10 @@ class VanillaPipeline(Pipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         ray_bundle, batch = self.datamanager.next_train(step)
-        model_outputs = self._model(ray_bundle)
+        if "sky_mask" in batch:
+            model_outputs = self._model(ray_bundle, batch["sky_mask"])
+        else:
+            model_outputs = self._model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 
         camera_opt_param_group = self.config.datamanager.camera_optimizer.param_group
@@ -291,7 +294,10 @@ class VanillaPipeline(Pipeline):
         """
         self.eval()
         ray_bundle, batch = self.datamanager.next_eval(step)
-        model_outputs = self.model(ray_bundle)
+        if "sky_mask" in batch:
+            model_outputs = self._model(ray_bundle, batch["sky_mask"])
+        else:
+            model_outputs = self._model(ray_bundle)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
         self.train()
@@ -308,7 +314,10 @@ class VanillaPipeline(Pipeline):
         self.eval()
         torch.cuda.empty_cache()
         image_idx, camera_ray_bundle, batch = self.datamanager.next_eval_image(step)
-        outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+        if "sky_mask" in batch:
+            outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle, batch["sky_mask"])
+        else:
+            outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "image_idx" not in metrics_dict
         metrics_dict["image_idx"] = image_idx

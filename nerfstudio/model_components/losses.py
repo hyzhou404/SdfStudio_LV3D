@@ -258,7 +258,7 @@ def pred_normal_loss(
     return (weights[..., 0] * (1.0 - torch.sum(normals * pred_normals, dim=-1))).sum(dim=-1)
 
 
-def monosdf_normal_loss(normal_pred: torch.Tensor, normal_gt: torch.Tensor):
+def monosdf_normal_loss(normal_pred: torch.Tensor, normal_gt: torch.Tensor, mask=None):
     """normal consistency loss as monosdf
 
     Args:
@@ -267,8 +267,8 @@ def monosdf_normal_loss(normal_pred: torch.Tensor, normal_gt: torch.Tensor):
     """
     normal_gt = torch.nn.functional.normalize(normal_gt, p=2, dim=-1)
     normal_pred = torch.nn.functional.normalize(normal_pred, p=2, dim=-1)
-    l1 = torch.abs(normal_pred - normal_gt).sum(dim=-1).mean()
-    cos = (1.0 - torch.sum(normal_pred * normal_gt, dim=-1)).mean()
+    l1 = torch.abs(normal_pred - normal_gt)[mask].sum(dim=-1).mean()
+    cos = (1.0 - torch.sum((normal_pred * normal_gt)[mask], dim=-1)).mean()
     return l1 + cos
 
 

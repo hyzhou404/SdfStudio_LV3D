@@ -41,9 +41,9 @@ class ExtractMesh:
     # extract the mesh using occupancy field (unisurf) or SDF, default sdf
     is_occupancy: bool = False
     """Minimum of the bounding box."""
-    bounding_box_min: Tuple[float, float, float] = (-6.0, -6.0, -6.0)
+    bounding_box_min: Tuple[float, float, float] = (-1, -1.0, -0.01)
     """Maximum of the bounding box."""
-    bounding_box_max: Tuple[float, float, float] = (6.0, 6.0, 6.0)
+    bounding_box_max: Tuple[float, float, float] = (1, 0.3, 2.05)
     """marching cube threshold"""
     marching_cube_threshold: float = 0.0
     """create visibility mask"""
@@ -68,6 +68,19 @@ class ExtractMesh:
         _, pipeline, _ = eval_setup(self.load_config)
 
         CONSOLE.print("Extract mesh with marching cubes and may take a while")
+
+        # assert self.resolution % 512 == 0
+        # # for sdf we can multi-scale extraction.
+        # get_surface_sliding(
+        #     sdf=lambda x: pipeline.model.field.get_pos_density(x)[0] - 2,
+        #     resolution=self.resolution,
+        #     bounding_box_min=self.bounding_box_min,
+        #     bounding_box_max=self.bounding_box_max,
+        #     coarse_mask=pipeline.model.scene_box.coarse_binary_gird,
+        #     output_path=self.output_path,
+        #     simplify_mesh=self.simplify_mesh,
+        # )
+        # return
 
         if self.create_visibility_mask:
             assert self.resolution % 512 == 0
@@ -123,7 +136,7 @@ class ExtractMesh:
             assert self.resolution % 512 == 0
             # for sdf we can multi-scale extraction.
             get_surface_sliding(
-                sdf=lambda x: pipeline.model.field.forward_geonetwork(x)[:, 0].contiguous(),
+                sdf=lambda x: pipeline.model.field.forward_geonetwork(x)[:, 0].contiguous() - 0.003,
                 resolution=self.resolution,
                 bounding_box_min=self.bounding_box_min,
                 bounding_box_max=self.bounding_box_max,

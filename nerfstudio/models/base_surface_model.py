@@ -23,6 +23,7 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Type
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.nn import Parameter
@@ -63,6 +64,7 @@ from nerfstudio.model_components.scene_colliders import (
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
 from nerfstudio.utils.colors import get_color
+import torch.distributions.normal as normal
 
 
 @dataclass
@@ -211,7 +213,7 @@ class SurfaceModel(Model):
         )
 
         # losses
-        self.rgb_loss = L1Loss()
+        self.rgb_loss = MSELoss(reduction='none')
         self.eikonal_loss = MSELoss()
         self.depth_loss = ScaleAndShiftInvariantLoss(alpha=0.5, scales=1)
         self.patch_loss = MultiViewLoss(
@@ -242,72 +244,116 @@ class SurfaceModel(Model):
             return_samples (bool, optional): _description_. Defaults to False.
         """
 
-    def get_foreground_mask(self, ray_samples: RaySamples) -> TensorType:
-        """_summary_
-
-        Args:
-            ray_samples (RaySamples): _description_
-        """
-        # TODO support multiple foreground type: box and sphere
-        inside_sphere_mask = (ray_samples.frustums.get_start_positions().norm(dim=-1, keepdim=True) < 1.0).float()
-        return inside_sphere_mask
-
-    def forward_background_field_and_merge(self, ray_samples: RaySamples, field_outputs: Dict) -> Dict:
-        """_summary_
-
-        Args:
-            ray_samples (RaySamples): _description_
-            field_outputs (Dict): _description_
-        """
-
-        inside_sphere_mask = self.get_foreground_mask(ray_samples)
-        # TODO only forward the points that are outside the sphere if there is a background model
-
-        field_outputs_bg = self.field_background(ray_samples)
-        field_outputs_bg[FieldHeadNames.ALPHA] = ray_samples.get_alphas(field_outputs_bg[FieldHeadNames.DENSITY])
-
-        field_outputs[FieldHeadNames.ALPHA] = (
-            field_outputs[FieldHeadNames.ALPHA] * inside_sphere_mask
-            + (1.0 - inside_sphere_mask) * field_outputs_bg[FieldHeadNames.ALPHA]
-        )
-        field_outputs[FieldHeadNames.RGB] = (
-            field_outputs[FieldHeadNames.RGB] * inside_sphere_mask
-            + (1.0 - inside_sphere_mask) * field_outputs_bg[FieldHeadNames.RGB]
-        )
-
-        # TODO make everything outside the sphere to be 0
-        return field_outputs
+    # def get_foreground_mask(self, ray_samples: RaySamples) -> TensorType:
+    #     """_summary_
+    #
+    #     Args:
+    #         ray_samples (RaySamples): _description_
+    #     """
+    #     # TODO support multiple foreground type: box and sphere
+    #     inside_sphere_mask = (ray_samples.frustums.get_start_positions().norm(dim=-1, keepdim=True) < 1.0).float()
+    #     return inside_sphere_mask
+    #
+    # def forward_background_field_and_merge(self, ray_samples: RaySamples, field_outputs: Dict) -> Dict:
+    #     """_summary_
+    #
+    #     Args:
+    #         ray_samples (RaySamples): _description_
+    #         field_outputs (Dict): _description_
+    #     """
+    #
+    #     inside_sphere_mask = self.get_foreground_mask(ray_samples)
+    #     # TODO only forward the points that are outside the sphere if there is a background model
+    #
+    #     field_outputs_bg = self.field_background(ray_samples)
+    #     field_outputs_bg[FieldHeadNames.ALPHA] = ray_samples.get_alphas(field_outputs_bg[FieldHeadNames.DENSITY])
+    #
+    #     field_outputs[FieldHeadNames.ALPHA] = (
+    #         field_outputs[FieldHeadNames.ALPHA] * inside_sphere_mask
+    #         + (1.0 - inside_sphere_mask) * field_outputs_bg[FieldHeadNames.ALPHA]
+    #     )
+    #     field_outputs[FieldHeadNames.RGB] = (
+    #         field_outputs[FieldHeadNames.RGB] * inside_sphere_mask
+    #         + (1.0 - inside_sphere_mask) * field_outputs_bg[FieldHeadNames.RGB]
+    #     )
+    #
+    #     # TODO make everything outside the sphere to be 0
+    #     return field_outputs
 
     def get_outputs(self, ray_bundle: RayBundle) -> Dict:
         samples_and_field_outputs = self.sample_and_forward_field(ray_bundle=ray_bundle)
+    def get_outputs(self, ray_bundle: RayBundle, sky_mask=None) -> Dict:
+        # TODO make this configurable
+        # compute near and far from from sphere with radius 1.0
+        # ray_bundle = self.sphere_collider(ray_bundle)
+
+        samples_and_field_outputs = self.sample_and_forward_field(ray_bundle=ray_bundle, sky_mask=sky_mask)
 
         # Shotscuts
         field_outputs = samples_and_field_outputs["field_outputs"]
         ray_samples = samples_and_field_outputs["ray_samples"]
         weights = samples_and_field_outputs["weights"]
+        bg_transmittance = samples_and_field_outputs["bg_transmittance"]
 
         rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
         depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         # the rendered depth is point-to-point distance and we should convert to depth
-        depth = depth / ray_bundle.directions_norm
+        # depth = depth / ray_bundle.directions_norm
 
         # remove the rays that don't intersect with the surface
+        # sdf_out = field_outputs[FieldHeadNames.SDF]
         # hit = (field_outputs[FieldHeadNames.SDF] > 0.0).any(dim=1) & (field_outputs[FieldHeadNames.SDF] < 0).any(dim=1)
-        # depth[~hit] = 10000.0
+        # depth[~hit] = 10.0
 
         normal = self.renderer_normal(semantics=field_outputs[FieldHeadNames.NORMAL], weights=weights)
         accumulation = self.renderer_accumulation(weights=weights)
 
+        # background model
+        if self.config.background_model != "none":
+            # TODO remove hard-coded far value
+            # sample inversely from far to 1000 and points and forward the bg model
+            ray_bundle.nears = ray_bundle.fars
+            ray_bundle.fars = torch.ones_like(ray_bundle.fars) * self.config.far_plane_bg
+
+            ray_samples_bg = self.sampler_bg(ray_bundle)
+            # use the same background model for both density field and occupancy field
+            field_outputs_bg = self.field_background(ray_samples_bg)
+            weights_bg = ray_samples_bg.get_weights(field_outputs_bg[FieldHeadNames.DENSITY])
+
+            rgb_bg = self.renderer_rgb(rgb=field_outputs_bg[FieldHeadNames.RGB], weights=weights_bg)
+            depth_bg = self.renderer_depth(weights=weights_bg, ray_samples=ray_samples_bg)
+            accumulation_bg = self.renderer_accumulation(weights=weights_bg)
+
+            # merge background color to forgound color
+            rgb = rgb + bg_transmittance * rgb_bg
+
+            bg_outputs = {
+                "bg_rgb": rgb_bg,
+                "bg_accumulation": accumulation_bg,
+                "bg_depth": depth_bg,
+                "bg_weights": weights_bg,
+            }
+        else:
+            bg_outputs = {}
+
+
+        density = field_outputs[FieldHeadNames.DENSITY]
+        ray_points = self.scene_contraction(
+            ray_samples.frustums.get_start_positions()
+        )
+        ray_steps = ray_samples.frustums.starts
+
         outputs = {
             "rgb": rgb,
             "accumulation": accumulation,
+            "density": density,
+            # "sdf_out": sdf_out,
             "depth": depth,
             "normal": normal,
             "weights": weights,
-            "ray_points": self.scene_contraction(
-                ray_samples.frustums.get_start_positions()
-            ),  # used for creating visiblity mask
-            "directions_norm": ray_bundle.directions_norm,  # used to scale z_vals for free space and sdf loss
+            "ray_points": ray_points,
+            "ray_steps": ray_steps,
+            # "directions_norm": ray_bundle.directions_norm,  # used to scale z_vals for free space and sdf loss
         }
 
         if self.training:
@@ -370,6 +416,11 @@ class SurfaceModel(Model):
         loss_dict = {}
         image = batch["image"].to(self.device)
         loss_dict["rgb_loss"] = self.rgb_loss(image, outputs["rgb"])
+        if "sky_mask" in batch:
+            loss_dict["sky_accumulation_loss"] = 2 * torch.mean(outputs["accumulation"][batch["sky_mask"]])
+            # loss_dict["rgb_loss"][batch["sky_mask"]] = 0
+            # loss_dict["sky_density_loss"] = 0.01*torch.mean(outputs["density"][batch["sky_mask"]])
+        loss_dict["rgb_loss"] = torch.mean(loss_dict["rgb_loss"])
         if self.training:
             # eikonal loss
             grad_theta = outputs["eik_grad"]
@@ -384,12 +435,55 @@ class SurfaceModel(Model):
                 )
 
             # monocular normal loss
-            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0:
+            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 and batch["step"] > 5000:
                 normal_gt = batch["normal"].to(self.device)
                 normal_pred = outputs["normal"]
                 loss_dict["normal_loss"] = (
-                    monosdf_normal_loss(normal_pred, normal_gt) * self.config.mono_normal_loss_mult
+                    monosdf_normal_loss(normal_pred, normal_gt, batch["road_mask"]) * self.config.mono_normal_loss_mult
                 )
+
+            # # urban radiance field loss
+            # if "sky_mask" in batch:
+            #
+            #     eps = 0.2 - ((0.2 - 0.02) / 20000 * batch['step'])
+            #     # eps = 0.1
+            #
+            #     depth_pred = outputs["depth"]  # mono pred (bs, 1)
+            #     sky_mask = batch['sky_mask'].bool()
+            #     zs = outputs['ray_steps']  # scaled z near~far (bs, sample, 1)
+            #     weights = outputs['weights']  # (bs, sample, 1)
+            #
+            #     zs_flat = torch.squeeze(zs, -1)  # (2048, 48)
+            #     depth_flat = depth_pred
+            #     weights_flat = torch.squeeze(weights, -1)  # (2048, 48)
+            #     sky_ray_flat = sky_mask.squeeze(-1)  # (2048,)
+            #     filter_weights = weights_flat[sky_ray_flat]
+            #
+            #     # term1
+            #     t1_mask = (zs_flat <= depth_flat - eps)[sky_ray_flat]
+            #     if filter_weights[t1_mask].shape[0] > 0:
+            #         urf_l1 = torch.mean(filter_weights[t1_mask] ** 2)
+            #     else:
+            #         urf_l1 = 0
+            #     # term2
+            #     gaussian_dist = normal.Normal(depth_flat[:, 0][sky_ray_flat], eps / 3)
+            #     t2_mask = ((depth_flat - eps < zs_flat) & (zs_flat < depth_flat + eps))[sky_ray_flat]
+            #     t2_weights = filter_weights[t2_mask]
+            #     t2_gt = torch.exp(gaussian_dist.log_prob(zs_flat[sky_ray_flat].T)).T[t2_mask]
+            #     scale = torch.sum(t2_gt) / torch.sum(t2_weights)
+            #     urf_l2 = torch.mean((t2_weights - t2_gt / scale) ** 2)
+            #     # term3
+            #     t3_mask = (zs_flat >= depth_flat + eps)[sky_ray_flat]
+            #     if filter_weights[t3_mask].shape[0] > 0:
+            #         urf_l3 = torch.mean(filter_weights[t3_mask] ** 2)
+            #     else:
+            #         urf_l3 = 0
+            #
+            #     loss_dict['urf_loss'] = 0.1 * (urf_l1 + urf_l2 + urf_l3)
+            #
+            #     # metric but in loss
+            #     # loss_dict["inside_count"] = torch.sum(t2_mask)
+            #     # loss_dict["outside_count"] = torch.sum(t1_mask) + torch.sum(t3_mask)
 
             # monocular depth loss
             if "depth" in batch and self.config.mono_depth_loss_mult > 0.0:
@@ -398,9 +492,13 @@ class SurfaceModel(Model):
                 depth_gt = batch["depth"].to(self.device)[..., None]
                 depth_pred = outputs["depth"]
 
-                mask = torch.ones_like(depth_gt).reshape(1, 32, -1).bool()
+                # mask = torch.ones_like(depth_gt).reshape(1, 32, -1).bool()
+
+                mask = ~batch['sky_mask'].reshape(1, 32, -1).bool()
+                # mask = batch["road_mask"].reshape(1, 32, -1).bool()
+                # depth loss
                 loss_dict["depth_loss"] = (
-                    self.depth_loss(depth_pred.reshape(1, 32, -1), (depth_gt * 50 + 0.5).reshape(1, 32, -1), mask)
+                    self.depth_loss(depth_pred.reshape(1, 32, -1), depth_gt.reshape(1, 32, -1), mask)
                     * self.config.mono_depth_loss_mult
                 )
 
@@ -451,6 +549,8 @@ class SurfaceModel(Model):
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
         image = batch["image"].to(self.device)
         rgb = outputs["rgb"]
+        # if "sky_mask" in batch:
+        #     rgb[batch["sky_mask"]] = torch.tensor([1.0, 1.0, 1.0]).to(outputs["rgb"].device)
         acc = colormaps.apply_colormap(outputs["accumulation"])
 
         normal = outputs["normal"]
@@ -460,37 +560,71 @@ class SurfaceModel(Model):
 
         combined_rgb = torch.cat([image, rgb], dim=1)
         combined_acc = torch.cat([acc], dim=1)
-        if "depth" in batch:
-            depth_gt = batch["depth"].to(self.device)
-            depth_pred = outputs["depth"]
+        # if "depth" in batch:
+        #     depth_gt = batch["depth"].to(self.device)
+        #     depth_pred = outputs["depth"]
+        #
+        #     # align to predicted depth and normalize
+        #     scale, shift = compute_scale_and_shift(
+        #         depth_pred[None, ..., 0], depth_gt[None, ...], depth_gt[None, ...] > 0.0
+        #     )
+        #     depth_pred = depth_pred * scale + shift
+        #
+        #     combined_depth = torch.cat([depth_gt[..., None], depth_pred], dim=1)
+        #     combined_depth = colormaps.apply_depth_colormap(combined_depth)
+        # else:
+            # depth = colormaps.apply_depth_colormap(
+            #     outputs["depth"],
+            #     accumulation=outputs["accumulation"],
+            # )
+            # combined_depth = torch.cat([depth], dim=1)
+        depth = colormaps.apply_depth_colormap(
+            outputs["depth"],
+            accumulation=outputs["accumulation"],
+        )
+        combined_depth = torch.cat([depth], dim=1)
 
-            # align to predicted depth and normalize
-            scale, shift = compute_scale_and_shift(
-                depth_pred[None, ..., 0], depth_gt[None, ...], depth_gt[None, ...] > 0.0
-            )
-            depth_pred = depth_pred * scale + shift
+        # ray weights, depth and sdf debug
+        debug = False
+        if debug:
+            depth = outputs['depth']
+            density = outputs["density"]
+            weights = outputs['weights']  # (376, 1408, 48)
+            points = outputs["ray_points"]  # (376, 1408, 144)
+            ray_steps = outputs['ray_steps']
 
-            combined_depth = torch.cat([depth_gt[..., None], depth_pred], dim=1)
-            combined_depth = colormaps.apply_depth_colormap(combined_depth)
-        else:
-            # ray_bundle = batch['ray_bundle']
-            # depth = outputs['depth']
-            # for _ in range(40):
-            #     i = random.randint(0, depth.shape[0])
-            #     j = random.randint(0, depth.shape[1])
-            #     ray = ray_bundle[i, j]
-            #     eps = 0.05
-            #     xyzs = []
-            #     for k in [-1, 0, 1]:
-            #         xyzs.append(ray.origins + (depth[i, j] + k*eps) * ray.directions)
-            #     xyzs = torch.stack(xyzs)
-            #     print(self.field.forward_geonetwork(xyzs)[:, 0].detach().cpu())
-            # exit(0)
-            depth = colormaps.apply_depth_colormap(
-                outputs["depth"],
-                accumulation=outputs["accumulation"],
-            )
-            combined_depth = torch.cat([depth], dim=1)
+            ray_data = []
+            depths = []
+            x = np.linspace(0, depth.shape[0]-1, 10, dtype=int)
+            y = np.linspace(0, depth.shape[1]-1, 30, dtype=int)
+            xx, yy = np.meshgrid(x, y)
+            ij = np.stack((xx.ravel(), yy.ravel()), axis=1)
+            for i, j in ij:
+                ray_density = density[i, j]
+                ray_weights = weights[i, j]
+                ray_points = points[i, j].view(-1, 3)
+                # ray_zs = torch.tensor(
+                #             [torch.mean((point - ray.origins) / ray.directions).item() / ray.directions_norm for point in ray_points]
+                #         ).to(ray_points.device)
+                ray_zs = ray_steps[i, j]
+                ray_sdf = self.field.forward_geonetwork(ray_points)[:, 0]
+                ray_data.append(torch.stack([ray_zs, ray_density, ray_weights, ray_sdf]).detach().cpu().numpy())
+
+                depths.append(depth[i, j].item())
+
+                # eps = 0.05
+                # xyzs = []
+                # for k in [-1, 0, 1]:
+                #     xyzs.append(ray.origins + (depth[i, j] + k*eps) * ray.directions)
+                # xyzs = torch.stack(xyzs)
+                # print(self.field.forward_geonetwork(xyzs)[:, 0].detach().cpu())
+            ray_data = np.array(ray_data)
+            depths = np.array(depths)
+            np.save('/data/hyzhou/data/ray_data/img0.npy', batch['image'].detach().cpu().numpy())
+            np.save('/data/hyzhou/data/ray_data/img0_ray.npy', ray_data)
+            np.save('/data/hyzhou/data/ray_data/img0_depths.npy', depths)
+            np.save('/data/hyzhou/data/ray_data/img0_ij.npy', ij)
+            exit(0)
 
         if "normal" in batch:
             normal_gt = (batch["normal"].to(self.device) + 1.0) / 2.0
@@ -504,6 +638,15 @@ class SurfaceModel(Model):
             "depth": combined_depth,
             "normal": combined_normal,
         }
+
+        # if "depth" in batch:
+        #     depth_gt = batch["depth"].to(self.device)
+        #     depth_gt = colormaps.apply_depth_colormap(
+        #         depth_gt,
+        #         accumulation=outputs["accumulation"],
+        #     )
+        #     depth_gt = torch.cat([depth_gt], dim=1)
+        #     images_dict['depth_gt'] = depth_gt
 
         if "sensor_depth" in batch:
             sensor_depth = batch["sensor_depth"]

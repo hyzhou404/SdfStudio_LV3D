@@ -75,6 +75,16 @@ def get_image(image_filename, alpha_color=None) -> TensorType["image_height", "i
     return image
 
 
+def get_sky_masks(image_idx: int, sky_masks):
+    sky_mask = sky_masks[image_idx]
+    return {'sky_mask': sky_mask}
+
+
+def get_road_masks(image_idx: int, road_masks):
+    road_mask = road_masks[image_idx]
+    return {'road_mask': road_mask}
+
+
 def get_depths_and_normals(image_idx: int, depths, normals):
     """function to process additional depths and normal information
 
@@ -141,7 +151,11 @@ class SDFStudioDataParserConfig(DataParserConfig):
     """target class to instantiate"""
     data: Path = Path("data/DTU/scan65")
     """Directory specifying location of data."""
-    include_mono_prior: bool = False
+    include_sky_mask: bool = True
+    """whether or not to load sky mask"""
+    include_road_mask: bool = True
+    """whether or not to load road mask"""
+    include_mono_prior: bool = True
     """whether or not to load monocular depth and normal """
     include_sensor_depth: bool = False
     """whether or not to load sensor depth"""
@@ -162,9 +176,9 @@ class SDFStudioDataParserConfig(DataParserConfig):
     pairs_sorted_ascending: Optional[bool] = True
     """if src image pairs are sorted in ascending order by similarity i.e. 
     the last element is the most similar to the first (ref)"""
-    skip_every_for_val_split: int = 10
+    skip_every_for_val_split: int = 20
     """sub sampling validation images"""
-    train_val_no_overlap: bool = True
+    train_val_no_overlap: bool = False
     """remove selected / sampled validation images from training set"""
     auto_orient: bool = False
     """automatically orient the scene such that the up direction is the same as the viewer's up direction"""
@@ -185,15 +199,17 @@ class SDFStudio(DataParser):
         indices = list(range(len(meta["frames"])))
         # subsample to avoid out-of-memory for validation set
         if split != "train" and self.config.skip_every_for_val_split >= 1:
-            indices = [i for i in indices if (i+i//2) % self.config.skip_every_for_val_split == 0]
+            indices = [i for i in indices if (i+1) % self.config.skip_every_for_val_split == 0]
         else:
             # if you use this option, training set should not contain any image in validation set
             if self.config.train_val_no_overlap:
-                indices = [i for i in indices if (i+i//2) % self.config.skip_every_for_val_split != 0]
+                indices = [i for i in indices if (i+1) % self.config.skip_every_for_val_split != 0]
 
         image_filenames = []
         depth_images = []
         normal_images = []
+        sky_masks = []
+        road_masks = []
         sensor_depth_images = []
         foreground_mask_images = []
         sfm_points = []
@@ -226,11 +242,25 @@ class SDFStudio(DataParser):
                 intrinsics[0, 2] += 200
                 height, width = 1200, 1600
                 meta["height"], meta["width"] = height, width
-            
+
+            if self.config.include_sky_mask:
+                sky_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_sky_mask.npy'))
+                sky_masks.append(torch.from_numpy(sky_mask).bool())
+
+            if self.config.include_road_mask:
+                road_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_ground_mask.npy'))
+                road_masks.append(torch.from_numpy(road_mask).bool())
+
             if self.config.include_mono_prior:
                 assert meta["has_mono_prior"]
+                assert self.config.include_sky_mask is True
                 # load mono depth
-                depth = np.load(self.config.data / frame["mono_depth_path"])
+                disp = np.load(self.config.data / frame["mono_depth_path"])
+                depth = np.clip(1/(disp+1e-6), 0, meta["scene_box"]["far"])
+
+                sky_mask = np.load(self.config.data / frame["mono_depth_path"].replace('depth', 'sky_mask'))
+                depth[sky_mask == 0] = meta["scene_box"]["far"]
+
                 depth_images.append(torch.from_numpy(depth).float())
 
                 # load mono normal
@@ -319,12 +349,23 @@ class SDFStudio(DataParser):
         # TODO supports downsample
         # cameras.rescale_output_resolution(scaling_factor=1.0 / self.config.downscale_factor)
 
-        if self.config.include_mono_prior:
+        if self.config.include_sky_mask:
             additional_inputs_dict = {
-                "cues": {"func": get_depths_and_normals, "kwargs": {"depths": depth_images, "normals": normal_images}}
+                "sky": {"func": get_sky_masks, "kwargs": {"sky_masks": sky_masks}}
             }
         else:
             additional_inputs_dict = {}
+
+        if self.config.include_road_mask:
+            additional_inputs_dict["flat_plane"] = {
+                "func": get_road_masks, "kwargs": {"road_masks": road_masks}
+            }
+
+        if self.config.include_mono_prior:
+            additional_inputs_dict["cues"] = {
+                "func": get_depths_and_normals,
+                "kwargs": {"depths": depth_images, "normals": normal_images},
+            }
 
         if self.config.include_sensor_depth:
             additional_inputs_dict["sensor_depth"] = {

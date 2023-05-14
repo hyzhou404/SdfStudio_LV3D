@@ -57,6 +57,7 @@ from nerfstudio.model_components.scene_colliders import NearFarCollider
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import colormaps
 from nerfstudio.utils.colors import get_color
+import random
 
 
 @dataclass
@@ -313,6 +314,48 @@ class NerfactoModel(Model):
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
+
+        debug = False
+        if debug:
+            depth = outputs['depth']
+            weights = outputs['weights']  # (376, 1408, 48)
+            densities = outputs["densities"]
+            points = outputs["ray_points"]  # (376, 1408, 144)
+            ray_steps = outputs['ray_steps']
+
+            ray_data = []
+            depths = []
+            ij = []
+            for idx in range(100):
+                i = random.randint(0, depth.shape[0] - 1)
+                j = random.randint(0, depth.shape[1] - 1)
+                ij.append([i, j])
+                # print(idx, accu[i, j].item())
+                ray_weights = weights[i, j]
+                ray_points = points[i, j].view(-1, 3)
+                # ray_zs = torch.tensor(
+                #             [torch.mean((point - ray.origins) / ray.directions).item() / ray.directions_norm for point in ray_points]
+                #         ).to(ray_points.device)
+                ray_zs = ray_steps[i, j]
+                ray_sdf = self.field.forward_geonetwork(ray_points)[:, 0]
+                ray_data.append(torch.stack([ray_zs, ray_weights, ray_sdf]).detach().cpu().numpy())
+
+                depths.append(depth[i, j].item())
+
+                # eps = 0.05
+                # xyzs = []
+                # for k in [-1, 0, 1]:
+                #     xyzs.append(ray.origins + (depth[i, j] + k*eps) * ray.directions)
+                # xyzs = torch.stack(xyzs)
+                # print(self.field.forward_geonetwork(xyzs)[:, 0].detach().cpu())
+            ray_data = np.array(ray_data)
+            depths = np.array(depths)
+            ij = np.array(ij)
+            np.save('/data/hyzhou/data/ray_data/img0.npy', batch['image'].detach().cpu().numpy())
+            np.save('/data/hyzhou/data/ray_data/img0_ray.npy', ray_data)
+            np.save('/data/hyzhou/data/ray_data/img0_depths.npy', depths)
+            np.save('/data/hyzhou/data/ray_data/img0_ij.npy', ij)
+            exit(0)
 
         image = batch["image"].to(self.device)
         rgb = outputs["rgb"]

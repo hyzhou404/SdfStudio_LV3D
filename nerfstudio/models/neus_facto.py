@@ -35,7 +35,7 @@ from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.models.neus import NeuSModel, NeuSModelConfig
 from nerfstudio.fields.density_fields import HashMLPDensityField
 from nerfstudio.model_components.losses import interlevel_loss, interlevel_loss_zip
-from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler
+from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler, UniformSampler
 from nerfstudio.utils import colormaps
 
 
@@ -48,9 +48,9 @@ class NeuSFactoModelConfig(NeuSModelConfig):
     """Number of samples per ray for the proposal network."""
     num_neus_samples_per_ray: int = 48
     """Number of samples per ray for the nerf network."""
-    proposal_update_every: int = 5
+    proposal_update_every: int = 1
     """Sample every n steps after the warmup"""
-    proposal_warmup: int = 5000
+    proposal_warmup: int = 500
     """Scales n from 1 to proposal_update_every over this many steps"""
     num_proposal_iterations: int = 2
     """Number of proposal network iterations."""
@@ -145,6 +145,8 @@ class NeuSFactoModel(NeuSModel):
             single_jitter=self.config.use_single_jitter,
             update_sched=update_schedule,
         )
+
+        self.sampler_uniform = UniformSampler(num_samples=self.config.num_neus_samples_per_ray, single_jitter=True)
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = super().get_param_groups()
@@ -279,15 +281,25 @@ class NeuSFactoModel(NeuSModel):
 
         return callbacks
 
-    def sample_and_forward_field(self, ray_bundle: RayBundle):
+    def sample_and_forward_field(self, ray_bundle: RayBundle, sky_mask=None):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
 
-        field_outputs = self.field(ray_samples, return_alphas=True)
 
-        if self.config.background_model != "none":
-            field_outputs = self.forward_background_field_and_merge(ray_samples, field_outputs)
+        # field_outputs = self.field(ray_samples, return_alphas=True)
+        #
+        # if self.config.background_model != "none":
+        #     field_outputs = self.forward_background_field_and_merge(ray_samples, field_outputs)
+        #
+        # weights = ray_samples.get_weights_from_alphas(field_outputs[FieldHeadNames.ALPHA])
 
-        weights = ray_samples.get_weights_from_alphas(field_outputs[FieldHeadNames.ALPHA])
+        # field_outputs = self.field(ray_samples, return_alphas=True)
+        # weights, transmittance = ray_samples.get_weights_and_transmittance_from_alphas(
+        #     field_outputs[FieldHeadNames.ALPHA]
+        # )
+        field_outputs = self.field.forward(ray_samples)
+        weights, transmittance = ray_samples.get_weights_and_transmittance(field_outputs[FieldHeadNames.DENSITY])
+
+        bg_transmittance = transmittance[:, -1, :]
 
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
@@ -298,6 +310,7 @@ class NeuSFactoModel(NeuSModel):
             "weights": weights,
             "weights_list": weights_list,
             "ray_samples_list": ray_samples_list,
+            "bg_transmittance": bg_transmittance
         }
         return samples_and_field_outputs
 

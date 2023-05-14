@@ -219,10 +219,10 @@ def launch(
 
 def main(config: cfg.Config) -> None:
     """Main function."""
-    config.pipeline.datamanager.dataparser.scene_scale = 6.0
-    config.pipeline.model.near_plane = 0.0
-    config.pipeline.model.far_plane = 6.0
-    config.pipeline.model.collider_params = {'near_plane': 0.0, 'far_plane': 6.0}
+    # config.pipeline.datamanager.dataparser.scene_scale = 6.0
+    config.pipeline.model.near_plane = 0.01
+    config.pipeline.model.far_plane = 10.0
+    config.pipeline.model.collider_params = {'near_plane': 0.1, 'far_plane': 10.0}
 
     config.set_timestamp()
     if config.data:

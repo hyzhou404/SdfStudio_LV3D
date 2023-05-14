@@ -58,6 +58,7 @@ class RGBRenderer(nn.Module):
         background_color: Union[Literal["random", "last_sample"], TensorType[3]] = "random",
         ray_indices: Optional[TensorType["num_samples"]] = None,
         num_rays: Optional[int] = None,
+        sky_mask = None,
     ) -> TensorType["bs":..., 3]:
         """Composite samples along ray and render color image
 
@@ -80,6 +81,14 @@ class RGBRenderer(nn.Module):
         else:
             comp_rgb = torch.sum(weights * rgb, dim=-2)
             accumulated_weight = torch.sum(weights, dim=-2)
+            # if sky_mask is not None:
+            #     sky_comp_rgb = torch.mean(rgb[sky_mask], dim=-2)
+            #     entity_comp_rgb = torch.sum(weights[~sky_mask] * rgb[~sky_mask], dim=-2)
+            #     comp_rgb = torch.zeros(sky_mask.shape[0], 3).to(sky_mask.device)
+            #     comp_rgb[sky_mask] = sky_comp_rgb
+            #     comp_rgb[~sky_mask] = entity_comp_rgb
+            # else:
+            #     comp_rgb = torch.sum(weights * rgb, dim=-2)
 
         if background_color == "last_sample":
             background_color = rgb[..., -1, :]
@@ -97,6 +106,7 @@ class RGBRenderer(nn.Module):
         weights: TensorType["bs":..., "num_samples", 1],
         ray_indices: Optional[TensorType["num_samples"]] = None,
         num_rays: Optional[int] = None,
+        sky_mask = None,
     ) -> TensorType["bs":..., 3]:
         """Composite samples along ray and render color image
 
@@ -111,7 +121,8 @@ class RGBRenderer(nn.Module):
         """
 
         rgb = self.combine_rgb(
-            rgb, weights, background_color=self.background_color, ray_indices=ray_indices, num_rays=num_rays
+            rgb, weights, background_color=self.background_color,
+            ray_indices=ray_indices, num_rays=num_rays, sky_mask=sky_mask
         )
         if not self.training:
             torch.clamp_(rgb, min=0.0, max=1.0)
@@ -244,7 +255,8 @@ class DepthRenderer(nn.Module):
             return median_depth
         if self.method == "expected":
             eps = 1e-10
-            steps = (ray_samples.frustums.starts + ray_samples.frustums.ends) / 2
+            # steps = (ray_samples.frustums.starts + ray_samples.frustums.ends) / 2
+            steps = ray_samples.frustums.starts
 
             if ray_indices is not None and num_rays is not None:
                 # Necessary for packed samples from volumetric ray sampler
