@@ -268,7 +268,48 @@ def monosdf_normal_loss(normal_pred: torch.Tensor, normal_gt: torch.Tensor, mask
     normal_gt = torch.nn.functional.normalize(normal_gt, p=2, dim=-1)
     normal_pred = torch.nn.functional.normalize(normal_pred, p=2, dim=-1)
     l1 = torch.abs(normal_pred - normal_gt)[mask].sum(dim=-1).mean()
-    cos = (1.0 - torch.sum((normal_pred * normal_gt)[mask], dim=-1)).mean()
+    # cos = (1.0 - torch.sum((normal_pred * normal_gt)[mask], dim=-1)).mean()
+    return l1
+
+
+def monosdf_normal_diff_loss(normal_pred: torch.Tensor, normal_gt: torch.Tensor):
+    """normal different map consistency loss as monosdf
+
+    Args:
+        normal_pred (torch.Tensor): volume rendered normal
+        normal_gt (torch.Tensor): monocular normal
+    """
+    l1, cos = 0, 0
+
+    normal_gt = torch.nn.functional.normalize(normal_gt, p=2, dim=-1)
+    normal_pred = torch.nn.functional.normalize(normal_pred, p=2, dim=-1)
+
+    # for i in range(normal_gt.shape[0]):
+    # patch_gt, patch_pred = normal_gt[i], normal_pred[i]
+    patch_gt_x = torch.diff(normal_gt, dim=1)
+    patch_pred_x = torch.diff(normal_pred, dim=1)
+    l1 += torch.abs(patch_pred_x - patch_gt_x).view(-1, 3).sum(dim=-1).mean()
+    cos += (1.0 - torch.sum((patch_pred_x * patch_gt_x).view(-1, 3), dim=-1)).mean()
+
+    patch_gt_y = torch.diff(normal_gt, dim=2)
+    patch_pred_y = torch.diff(normal_pred, dim=2)
+    l1 += torch.abs(patch_pred_y - patch_gt_y).view(-1, 3).sum(dim=-1).mean()
+    cos += (1.0 - torch.sum((patch_pred_y * patch_gt_y).view(-1, 3), dim=-1)).mean()
+
+        # patch_gt_x2 = F.pad(torch.diff(torch.flip(patch_gt, dims=(1,)), dim=1), (0, 0, 1, 0, 0, 0), "constant", 0)
+        # patch_pred_x2 = F.pad(torch.diff(torch.flip(patch_pred, dims=(1,)), dim=1), (0, 0, 1, 0, 0, 0), "constant", 0)
+        # patch_gt_x2 = torch.flip(patch_gt_x2, dims=(1,))
+        # patch_pred_x2 = torch.flip(patch_pred_x2, dims=(1,))
+        # l1 += torch.abs(patch_pred_x2 - patch_gt_x2).view(-1, 3)[patch_mask].sum(dim=-1).mean()
+        # cos += (1.0 - torch.sum((patch_pred_x2 * patch_gt_x2).view(-1, 3)[patch_mask], dim=-1)).mean()
+        #
+        # patch_gt_y2 = F.pad(torch.diff(torch.flip(patch_gt, dims=(0,)), dim=0), (0, 0, 0, 0, 1, 0), "constant", 0)
+        # patch_pred_y2 = F.pad(torch.diff(torch.flip(patch_pred, dims=(0,)), dim=0), (0, 0, 0, 0, 1, 0), "constant", 0)
+        # patch_gt_y2 = torch.flip(patch_gt_y2, dims=(0,))
+        # patch_pred_y2 = torch.flip(patch_pred_y2, dims=(0,))
+        # l1 += torch.abs(patch_pred_y2 - patch_gt_y2).view(-1, 3)[patch_mask].sum(dim=-1).mean()
+        # cos += (1.0 - torch.sum((patch_pred_y2 * patch_gt_y2).view(-1, 3)[patch_mask], dim=-1)).mean()
+
     return l1 + cos
 
 

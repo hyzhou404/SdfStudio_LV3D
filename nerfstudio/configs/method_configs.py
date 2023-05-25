@@ -756,11 +756,11 @@ method_configs["neus"] = Config(
 method_configs["unisurf"] = Config(
     method_name="unisurf",
     trainer=TrainerConfig(
-        steps_per_eval_image=500,
+        steps_per_eval_image=1000,
         steps_per_eval_batch=5000,
         steps_per_save=20000,
         steps_per_eval_all_images=1000000,  # set to a very large model so we don't eval with all images
-        max_num_iterations=100000,
+        max_num_iterations=40001,
         mixed_precision=False,
     ),
     pipeline=VanillaPipelineConfig(
@@ -772,7 +772,19 @@ method_configs["unisurf"] = Config(
                 mode="off", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
             ),
         ),
-        model=UniSurfModelConfig(eval_num_rays_per_chunk=1024),
+        model=UniSurfModelConfig(
+            sdf_field=SDFFieldConfig(
+                use_grid_feature=True,
+                num_layers=2,
+                num_layers_color=2,
+                hidden_dim=256,
+                bias=0.5,
+                beta_init=0.3,
+                use_appearance_embedding=False,
+            ),
+            background_model="none",
+            eval_num_rays_per_chunk=1024,
+        ),
     ),
     optimizers={
         "fields": {

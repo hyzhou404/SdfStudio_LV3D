@@ -284,11 +284,11 @@ class HashEncoding(Encoding):
         self,
         num_levels: int = 16,
         min_res: int = 16,
-        max_res: int = 1024,
+        max_res: int = 2048,
         log2_hashmap_size: int = 19,
         features_per_level: int = 2,
         hash_init_scale: float = 0.001,
-        implementation: Literal["tcnn", "torch"] = "tcnn",
+        implementation: Literal["tcnn", "torch"] = "torch",
         interpolation: Optional[Literal["Nearest", "Linear", "Smoothstep"]] = None,
     ) -> None:
 
@@ -331,6 +331,8 @@ class HashEncoding(Encoding):
             assert (
                 interpolation is None or interpolation == "Linear"
             ), f"interpolation '{interpolation}' is not supported for torch encoding backend"
+
+        self.n_output_dims = self.num_levels * self.features_per_level
 
     def get_out_dim(self) -> int:
         return self.num_levels * self.features_per_level

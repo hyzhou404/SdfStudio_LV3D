@@ -32,6 +32,7 @@ from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.model_components.ray_samplers import UniSurfSampler
 from nerfstudio.models.base_surface_model import SurfaceModel, SurfaceModelConfig
+from nerfstudio.model_components.losses import monosdf_normal_diff_loss
 
 
 @dataclass
@@ -89,7 +90,7 @@ class UniSurfModel(SurfaceModel):
         )
         return callbacks
 
-    def sample_and_forward_field(self, ray_bundle: RayBundle) -> Dict:
+    def sample_and_forward_field(self, ray_bundle: RayBundle, sky_mask=None) -> Dict:
         ray_samples, surface_points = self.sampler(
             ray_bundle, occupancy_fn=self.field.get_occupancy, sdf_fn=self.field.get_sdf, return_surface_points=True
         )
@@ -108,6 +109,24 @@ class UniSurfModel(SurfaceModel):
         }
         return samples_and_field_outputs
 
+    def lidar_sample_and_sdf_field(self, lidar_rays):
+        device = lidar_rays.device
+        lidar_locs, lidar_points = lidar_rays[:, :3][:, None, :], lidar_rays[:, 3:][:, None, :]
+        lidar_range = lidar_points - lidar_locs
+
+        front_samples = lidar_locs.repeat(1, 60, 1) + \
+                        lidar_range.repeat(1, 60, 1) * torch.rand((1, 60, 1), device=device)
+        point_sample = lidar_points
+        back_samples = lidar_points.repeat(1, 3, 1) + torch.rand((1, 3, 1), device=device) * 0.01
+
+        lidar_ray_samples = torch.cat([front_samples, point_sample, back_samples], 1)
+        lidar_ray_samples = lidar_ray_samples.view(-1, 3).float()
+
+        sdf = self.field.forward_geonetwork(lidar_ray_samples)[..., 0]
+        # TODO: Why using occupancy supervision is unsuitable?
+        # occupancy = F.sigmoid(-10.0 * sdf)
+        return sdf.view(1024, 64)
+
     def get_metrics_dict(self, outputs, batch) -> Dict:
         metrics_dict = super().get_metrics_dict(outputs, batch)
         if self.training:
@@ -121,6 +140,20 @@ class UniSurfModel(SurfaceModel):
 
         # TODO move to base model as other model could also use it?
         if self.training and self.config.smooth_loss_multi > 0.0:
+            if batch["step"] > 40000 and batch["step"] % 10 == 0:
+                # normal_gt = batch["normal"].to(self.device)
+                # normal_gt = normal_gt.view(-1, 4, 4, 3)
+                normal_pred = outputs["normal"]
+                normal_pred = normal_pred.view(-1, 4, 4, 3)
+
+                normal_pred = torch.nn.functional.normalize(normal_pred, p=2, dim=-1)
+                diff_x = torch.mean(torch.diff(normal_pred, dim=1))
+                diff_y = torch.mean(torch.diff(normal_pred, dim=2))
+                loss_dict["normal_smoothness_loss2"] = (diff_x + diff_y) * self.config.mono_normal_loss_mult
+                # loss_dict["normal_smooth_loss2"] = (
+                #     monosdf_normal_diff_loss(normal_pred, normal_gt) * self.config.mono_normal_loss_mult
+                # )
+
             surface_points = outputs["surface_points"]
 
             surface_points_neig = surface_points + (torch.rand_like(surface_points) - 0.5) * 0.01

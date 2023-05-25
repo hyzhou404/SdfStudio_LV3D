@@ -423,7 +423,8 @@ class VanillaDataManager(DataManager):  # pylint: disable=abstract-method
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
         image_batch = next(self.iter_train_image_dataloader)
-        batch = self.train_pixel_sampler.sample(image_batch)
+        batch = self.train_pixel_sampler.sample(image_batch, step)
+        # batch = self.train_pixel_sampler.sample(image_batch)
         batch['step'] = step
         ray_indices = batch["indices"]
         ray_bundle = self.train_ray_generator(ray_indices)

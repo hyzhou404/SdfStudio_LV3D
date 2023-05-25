@@ -257,10 +257,9 @@ class VanillaPipeline(Pipeline):
             step: current iteration step to update sampler if using DDP (distributed)
         """
         ray_bundle, batch = self.datamanager.next_train(step)
-        if "sky_mask" in batch:
-            model_outputs = self._model(ray_bundle, batch["sky_mask"])
-        else:
-            model_outputs = self._model(ray_bundle)
+        lidar_rays = batch.get("lidar_rays", None)
+        sky_mask = batch.get("sky_mask", None)
+        model_outputs = self._model(ray_bundle, lidar_rays=lidar_rays, sky_mask=sky_mask)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
 
         camera_opt_param_group = self.config.datamanager.camera_optimizer.param_group
@@ -294,10 +293,9 @@ class VanillaPipeline(Pipeline):
         """
         self.eval()
         ray_bundle, batch = self.datamanager.next_eval(step)
-        if "sky_mask" in batch:
-            model_outputs = self._model(ray_bundle, batch["sky_mask"])
-        else:
-            model_outputs = self._model(ray_bundle)
+        lidar_rays = batch.get("lidar_rays", None)
+        sky_mask = batch.get("sky_mask", None)
+        model_outputs = self._model(ray_bundle, lidar_rays=lidar_rays, sky_mask=sky_mask)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
         self.train()

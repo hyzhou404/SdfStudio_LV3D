@@ -80,6 +80,11 @@ def get_sky_masks(image_idx: int, sky_masks):
     return {'sky_mask': sky_mask}
 
 
+def get_dilate_sky_masks(image_idx: int, dilate_sky_masks):
+    dilate_sky_mask = dilate_sky_masks[image_idx]
+    return {'dilate_sky_mask': dilate_sky_mask}
+
+
 def get_road_masks(image_idx: int, road_masks):
     road_mask = road_masks[image_idx]
     return {'road_mask': road_mask}
@@ -163,6 +168,8 @@ class SDFStudioDataParserConfig(DataParserConfig):
     """whether or not to load foreground mask"""
     include_sfm_points: bool = False
     """whether or not to load sfm points"""
+    include_lidar: bool = True
+    """whether or not to load lidar data"""
     downscale_factor: int = 1
     scene_scale: float = 2.0
     """
@@ -209,10 +216,12 @@ class SDFStudio(DataParser):
         depth_images = []
         normal_images = []
         sky_masks = []
+        dilate_sky_masks = []
         road_masks = []
         sensor_depth_images = []
         foreground_mask_images = []
         sfm_points = []
+        lidar_rays = None
         fx = []
         fy = []
         cx = []
@@ -245,7 +254,9 @@ class SDFStudio(DataParser):
 
             if self.config.include_sky_mask:
                 sky_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_sky_mask.npy'))
+                dilate_sky_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_dilatesky_mask.npy'))
                 sky_masks.append(torch.from_numpy(sky_mask).bool())
+                dilate_sky_masks.append(torch.from_numpy(dilate_sky_mask).bool())
 
             if self.config.include_road_mask:
                 road_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_ground_mask.npy'))
@@ -297,6 +308,11 @@ class SDFStudio(DataParser):
                 # load sparse sfm points
                 sfm_points_view = np.loadtxt(self.config.data / frame["sfm_sparse_points_view"])
                 sfm_points.append(torch.from_numpy(sfm_points_view).float())
+
+        if self.config.include_lidar:
+            lidar_points = np.load(self.config.data / 'lidar_point.npy')
+            lidar_locs = np.load(self.config.data / 'lidar_loc.npy')
+            lidar_rays = np.hstack([lidar_locs, lidar_points])
 
         fx = torch.stack(fx)
         fy = torch.stack(fy)
@@ -351,7 +367,8 @@ class SDFStudio(DataParser):
 
         if self.config.include_sky_mask:
             additional_inputs_dict = {
-                "sky": {"func": get_sky_masks, "kwargs": {"sky_masks": sky_masks}}
+                "sky": {"func": get_sky_masks, "kwargs": {"sky_masks": sky_masks}},
+                "dilate_sky": {"func": get_dilate_sky_masks, "kwargs": {"dilate_sky_masks": dilate_sky_masks}}
             }
         else:
             additional_inputs_dict = {}
@@ -419,5 +436,6 @@ class SDFStudio(DataParser):
             additional_inputs=additional_inputs_dict,
             depths=depth_images,
             normals=normal_images,
+            lidar_rays=lidar_rays,
         )
         return dataparser_outputs

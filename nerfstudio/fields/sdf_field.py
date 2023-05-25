@@ -34,6 +34,7 @@ from nerfstudio.field_components.encodings import (
     NeRFEncoding,
     PeriodicVolumeEncoding,
     TensorVMEncoding,
+    HashEncoding,
 )
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.field_components.spatial_distortions import SpatialDistortion

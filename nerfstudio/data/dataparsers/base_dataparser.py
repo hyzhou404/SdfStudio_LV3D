@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
+import numpy as np
 import torch
 from torchtyping import TensorType
 
@@ -74,6 +75,8 @@ class DataparserOutputs:
     """Dictionary of any metadata that be required for the given experiment.
     Will be processed by the InputDataset to create any additional tensors that may be required.
     """
+    lidar_rays: Optional = None
+    """lidar origin + lidar point, ndarray, (N, 6)"""
 
     def as_dict(self) -> dict:
         """Returns the dataclass as a dictionary."""

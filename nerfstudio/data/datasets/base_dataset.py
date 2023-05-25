@@ -113,8 +113,11 @@ class InputDataset(Dataset):
         if self.has_masks:
             mask_filepath = self._dataparser_outputs.mask_filenames[image_idx]
             data["mask"] = get_image_mask_tensor_from_path(filepath=mask_filepath, scale_factor=self.scale_factor)
+        if self._dataparser_outputs.lidar_rays is not None:
+            data['lidar_rays'] = torch.from_numpy(self._dataparser_outputs.lidar_rays)
         metadata = self.get_metadata(data)
         data.update(metadata)
+        data["image"][data["sky_mask"]] = torch.tensor([1., 1., 1.])
         return data
 
     # pylint: disable=no-self-use

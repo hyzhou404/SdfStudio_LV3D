@@ -47,6 +47,7 @@ from nerfstudio.model_components.losses import (
     SensorDepthLoss,
     compute_scale_and_shift,
     monosdf_normal_loss,
+    monosdf_normal_diff_loss,
 )
 from nerfstudio.model_components.patch_warping import PatchWarping
 from nerfstudio.model_components.ray_samplers import LinearDisparitySampler
@@ -236,7 +237,7 @@ class SurfaceModel(Model):
         return param_groups
 
     @abstractmethod
-    def sample_and_forward_field(self, ray_bundle: RayBundle) -> Dict:
+    def sample_and_forward_field(self, ray_bundle: RayBundle, sky_mask=None) -> Dict:
         """_summary_
 
         Args:
@@ -280,14 +281,16 @@ class SurfaceModel(Model):
     #     # TODO make everything outside the sphere to be 0
     #     return field_outputs
 
-    def get_outputs(self, ray_bundle: RayBundle) -> Dict:
-        samples_and_field_outputs = self.sample_and_forward_field(ray_bundle=ray_bundle)
-    def get_outputs(self, ray_bundle: RayBundle, sky_mask=None) -> Dict:
+    def get_outputs(self, ray_bundle: RayBundle, lidar_rays=None, sky_mask=None) -> Dict:
         # TODO make this configurable
         # compute near and far from from sphere with radius 1.0
         # ray_bundle = self.sphere_collider(ray_bundle)
-
         samples_and_field_outputs = self.sample_and_forward_field(ray_bundle=ray_bundle, sky_mask=sky_mask)
+        """60 samples front the lidar point, 1 sample exact the point, 3 sample back the point in eps"""
+        if lidar_rays is not None:
+            lidar_occupancy = self.lidar_sample_and_sdf_field(lidar_rays)
+        else:
+            lidar_occupancy = None
 
         # Shotscuts
         field_outputs = samples_and_field_outputs["field_outputs"]
@@ -353,6 +356,7 @@ class SurfaceModel(Model):
             "weights": weights,
             "ray_points": ray_points,
             "ray_steps": ray_steps,
+            "lidar_occupancy": lidar_occupancy
             # "directions_norm": ray_bundle.directions_norm,  # used to scale z_vals for free space and sdf loss
         }
 
@@ -417,9 +421,11 @@ class SurfaceModel(Model):
         image = batch["image"].to(self.device)
         loss_dict["rgb_loss"] = self.rgb_loss(image, outputs["rgb"])
         if "sky_mask" in batch:
-            loss_dict["sky_accumulation_loss"] = 2 * torch.mean(outputs["accumulation"][batch["sky_mask"]])
+            loss_dict["sky_accumulation_loss"] = 2 * torch.nan_to_num(
+                torch.mean(outputs["accumulation"][batch["sky_mask"]]), 0
+            )
             # loss_dict["rgb_loss"][batch["sky_mask"]] = 0
-            # loss_dict["sky_density_loss"] = 0.01*torch.mean(outputs["density"][batch["sky_mask"]])
+            # loss_dict["sky_density_loss"] = 0.1*torch.mean(outputs["density"][batch["sky_mask"]])
         loss_dict["rgb_loss"] = torch.mean(loss_dict["rgb_loss"])
         if self.training:
             # eikonal loss
@@ -435,17 +441,47 @@ class SurfaceModel(Model):
                 )
 
             # monocular normal loss
-            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 and batch["step"] > 5000:
+            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 and batch["step"] > 1500:
                 normal_gt = batch["normal"].to(self.device)
                 normal_pred = outputs["normal"]
                 loss_dict["normal_loss"] = (
                     monosdf_normal_loss(normal_pred, normal_gt, batch["road_mask"]) * self.config.mono_normal_loss_mult
                 )
 
-            # # urban radiance field loss
+            # if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 \
+            #         and batch["step"] > 20000 and batch["step"] % 10 == 0:
+            #     normal_gt = batch["normal"].to(self.device)
+            #     normal_pred = outputs["normal"]
+            #     normal_gt = normal_gt.view(-1, 4, 4, 3)
+            #     normal_pred = normal_pred.view(-1, 4, 4, 3)
+            #     loss_dict["normal_loss"] = (
+            #         monosdf_normal_diff_loss(normal_pred, normal_gt,
+            #                                  ~batch["dilate_sky_mask"]) * self.config.mono_normal_loss_mult
+            #     )
+
+            if outputs["lidar_occupancy"] is not None and batch["step"] > 1500:
+                occupancy = outputs["lidar_occupancy"]
+
+                # occupancy style loss
+                # l1 = torch.mean(torch.abs(occupancy[:, :60]))
+                # l2 = torch.mean(torch.abs(1 - occupancy[:, 60]))
+                # l3 = torch.mean(torch.abs(occupancy[:, 61:]))
+
+                # sdf style loss
+                device = occupancy.device
+                l1 = torch.mean(
+                    torch.maximum(0.1-occupancy[:, :60], torch.zeros_like(occupancy[:, :60], device=device))
+                )
+                l2 = torch.mean(torch.abs(occupancy[:, 60]))
+                l3 = torch.mean(
+                    torch.maximum(occupancy[:, 61:], torch.zeros_like(occupancy[:, 61:], device=device))
+                )
+                loss_dict["lidar_loss"] = 0.1 * (l1 + l2 + l3)
+
+            # urban radiance field loss
             # if "sky_mask" in batch:
             #
-            #     eps = 0.2 - ((0.2 - 0.02) / 20000 * batch['step'])
+            #     eps = 0.01 - ((0.01 - 0.001) / 20000 * batch['step'])
             #     # eps = 0.1
             #
             #     depth_pred = outputs["depth"]  # mono pred (bs, 1)
@@ -457,23 +493,23 @@ class SurfaceModel(Model):
             #     depth_flat = depth_pred
             #     weights_flat = torch.squeeze(weights, -1)  # (2048, 48)
             #     sky_ray_flat = sky_mask.squeeze(-1)  # (2048,)
-            #     filter_weights = weights_flat[sky_ray_flat]
+            #     filter_weights = weights_flat[~sky_ray_flat]
             #
             #     # term1
-            #     t1_mask = (zs_flat <= depth_flat - eps)[sky_ray_flat]
+            #     t1_mask = (zs_flat <= depth_flat - eps)[~sky_ray_flat]
             #     if filter_weights[t1_mask].shape[0] > 0:
             #         urf_l1 = torch.mean(filter_weights[t1_mask] ** 2)
             #     else:
             #         urf_l1 = 0
             #     # term2
-            #     gaussian_dist = normal.Normal(depth_flat[:, 0][sky_ray_flat], eps / 3)
-            #     t2_mask = ((depth_flat - eps < zs_flat) & (zs_flat < depth_flat + eps))[sky_ray_flat]
+            #     gaussian_dist = normal.Normal(depth_flat[:, 0][~sky_ray_flat], eps / 3)
+            #     t2_mask = ((depth_flat - eps < zs_flat) & (zs_flat < depth_flat + eps))[~sky_ray_flat]
             #     t2_weights = filter_weights[t2_mask]
-            #     t2_gt = torch.exp(gaussian_dist.log_prob(zs_flat[sky_ray_flat].T)).T[t2_mask]
+            #     t2_gt = torch.exp(gaussian_dist.log_prob(zs_flat[~sky_ray_flat].T)).T[t2_mask]
             #     scale = torch.sum(t2_gt) / torch.sum(t2_weights)
             #     urf_l2 = torch.mean((t2_weights - t2_gt / scale) ** 2)
             #     # term3
-            #     t3_mask = (zs_flat >= depth_flat + eps)[sky_ray_flat]
+            #     t3_mask = (zs_flat >= depth_flat + eps)[~sky_ray_flat]
             #     if filter_weights[t3_mask].shape[0] > 0:
             #         urf_l3 = torch.mean(filter_weights[t3_mask] ** 2)
             #     else:

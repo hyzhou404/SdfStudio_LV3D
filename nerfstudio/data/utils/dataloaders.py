@@ -118,6 +118,8 @@ class CacheDataloader(DataLoader):
         """Returns a collated batch."""
         batch_list = self._get_batch_list()
         collated_batch = self.collate_fn(batch_list)
+        if collated_batch["lidar_rays"] is not None:
+            collated_batch["lidar_rays"] = collated_batch["lidar_rays"][0]
         collated_batch = get_dict_to_torch(collated_batch, device=self.device, exclude=["image"])
         return collated_batch
 

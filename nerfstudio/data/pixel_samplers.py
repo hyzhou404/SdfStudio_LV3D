@@ -24,7 +24,10 @@ import torch
 from nerfstudio.utils.images import BasicImages
 
 
-def collate_image_dataset_batch(batch: Dict, num_rays_per_batch: int, keep_full_image: bool = False):
+def collate_image_dataset_batch(batch: Dict,
+                                num_rays_per_batch: int,
+                                keep_full_image: bool = False,
+                                step: int = -1):
     """
     Operates on a batch of images and samples pixels to use for generating rays.
     Returns a collated batch which is input to the Graph.
@@ -43,6 +46,23 @@ def collate_image_dataset_batch(batch: Dict, num_rays_per_batch: int, keep_full_
         nonzero_indices = torch.nonzero(batch["mask"][..., 0].to(device), as_tuple=False)
         chosen_indices = random.sample(range(len(nonzero_indices)), k=num_rays_per_batch)
         indices = nonzero_indices[chosen_indices]
+    elif step > 40000 and step % 10 == 0:   # patch sampler
+        patch_h, patch_w = 4, 4
+        assert num_rays_per_batch % (patch_h*patch_w) == 0
+        sky_mask = batch["dilate_sky_mask"]
+        _, img_h, img_w = sky_mask.shape
+        patch_h, patch_w = 4, 4
+        n_patch = num_rays_per_batch // (patch_h * patch_w)
+        nonsky_indices = torch.nonzero(~sky_mask)
+        nonsky_indices = nonsky_indices[
+            (nonsky_indices[:, 1] < (img_h - patch_h)) & (nonsky_indices[:, 2] < (img_w - patch_w))
+            ]
+        indices = nonsky_indices[torch.randint(0, nonsky_indices.shape[0]-1, (n_patch,))]
+        indices = indices.repeat_interleave(patch_h * patch_w, dim=0)
+        x_bias, y_bias = torch.meshgrid(torch.arange(patch_h), torch.arange(patch_w), indexing='ij')
+        bias = torch.hstack([torch.zeros(patch_w * patch_h, 1), x_bias.reshape(-1, 1), y_bias.reshape(-1, 1)])
+        bias = bias.repeat(n_patch, 1).long().to(sky_mask.device)
+        indices += bias
     else:
         indices = torch.floor(
             torch.rand((num_rays_per_batch, 3), device=device)
@@ -54,7 +74,7 @@ def collate_image_dataset_batch(batch: Dict, num_rays_per_batch: int, keep_full_
     collated_batch = {
         key: value[c, y, x]
         for key, value in batch.items()
-        if key not in ("image_idx", "src_imgs", "src_idxs", "sparse_sfm_points") and value is not None
+        if key not in ("image_idx", "src_imgs", "src_idxs", "sparse_sfm_points", "lidar_rays") and value is not None
     }
 
     assert collated_batch["image"].shape == (num_rays_per_batch, 3), collated_batch["image"].shape
@@ -68,6 +88,10 @@ def collate_image_dataset_batch(batch: Dict, num_rays_per_batch: int, keep_full_
 
     if keep_full_image:
         collated_batch["full_image"] = batch["image"]
+
+    if batch["lidar_rays"] is not None:
+        lidar_rays = batch["lidar_rays"]
+        collated_batch["lidar_rays"] = lidar_rays[torch.randint(0, lidar_rays.shape[0]-1, (1024,)), :]
 
     return collated_batch
 
@@ -181,11 +205,12 @@ class PixelSampler:  # pylint: disable=too-few-public-methods
         """
         self.num_rays_per_batch = num_rays_per_batch
 
-    def sample(self, image_batch: Dict):
+    def sample(self, image_batch: Dict, step=-1):
         """Sample an image batch and return a pixel batch.
 
         Args:
             image_batch: batch of images to sample from
+            step: optional, training step
         """
         if isinstance(image_batch["image"], list):
             image_batch = dict(image_batch.items())  # copy the dictioary so we don't modify the original
@@ -207,7 +232,7 @@ class PixelSampler:  # pylint: disable=too-few-public-methods
             )
         elif isinstance(image_batch["image"], torch.Tensor):
             pixel_batch = collate_image_dataset_batch(
-                image_batch, self.num_rays_per_batch, keep_full_image=self.keep_full_image
+                image_batch, self.num_rays_per_batch, keep_full_image=self.keep_full_image, step=step
             )
         else:
             raise ValueError("image_batch['image'] must be a list or torch.Tensor")
