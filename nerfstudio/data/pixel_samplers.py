@@ -46,23 +46,23 @@ def collate_image_dataset_batch(batch: Dict,
         nonzero_indices = torch.nonzero(batch["mask"][..., 0].to(device), as_tuple=False)
         chosen_indices = random.sample(range(len(nonzero_indices)), k=num_rays_per_batch)
         indices = nonzero_indices[chosen_indices]
-    elif step > 40000 and step % 10 == 0:   # patch sampler
-        patch_h, patch_w = 4, 4
-        assert num_rays_per_batch % (patch_h*patch_w) == 0
-        sky_mask = batch["dilate_sky_mask"]
-        _, img_h, img_w = sky_mask.shape
-        patch_h, patch_w = 4, 4
-        n_patch = num_rays_per_batch // (patch_h * patch_w)
-        nonsky_indices = torch.nonzero(~sky_mask)
-        nonsky_indices = nonsky_indices[
-            (nonsky_indices[:, 1] < (img_h - patch_h)) & (nonsky_indices[:, 2] < (img_w - patch_w))
-            ]
-        indices = nonsky_indices[torch.randint(0, nonsky_indices.shape[0]-1, (n_patch,))]
-        indices = indices.repeat_interleave(patch_h * patch_w, dim=0)
-        x_bias, y_bias = torch.meshgrid(torch.arange(patch_h), torch.arange(patch_w), indexing='ij')
-        bias = torch.hstack([torch.zeros(patch_w * patch_h, 1), x_bias.reshape(-1, 1), y_bias.reshape(-1, 1)])
-        bias = bias.repeat(n_patch, 1).long().to(sky_mask.device)
-        indices += bias
+    # elif step > 40000 and step % 10 == 0:   # patch sampler
+    #     patch_h, patch_w = 4, 4
+    #     assert num_rays_per_batch % (patch_h*patch_w) == 0
+    #     sky_mask = batch["dilate_sky_mask"]
+    #     _, img_h, img_w = sky_mask.shape
+    #     patch_h, patch_w = 4, 4
+    #     n_patch = num_rays_per_batch // (patch_h * patch_w)
+    #     nonsky_indices = torch.nonzero(~sky_mask)
+    #     nonsky_indices = nonsky_indices[
+    #         (nonsky_indices[:, 1] < (img_h - patch_h)) & (nonsky_indices[:, 2] < (img_w - patch_w))
+    #         ]
+    #     indices = nonsky_indices[torch.randint(0, nonsky_indices.shape[0]-1, (n_patch,))]
+    #     indices = indices.repeat_interleave(patch_h * patch_w, dim=0)
+    #     x_bias, y_bias = torch.meshgrid(torch.arange(patch_h), torch.arange(patch_w), indexing='ij')
+    #     bias = torch.hstack([torch.zeros(patch_w * patch_h, 1), x_bias.reshape(-1, 1), y_bias.reshape(-1, 1)])
+    #     bias = bias.repeat(n_patch, 1).long().to(sky_mask.device)
+    #     indices += bias
     else:
         indices = torch.floor(
             torch.rand((num_rays_per_batch, 3), device=device)
@@ -89,7 +89,7 @@ def collate_image_dataset_batch(batch: Dict,
     if keep_full_image:
         collated_batch["full_image"] = batch["image"]
 
-    if batch["lidar_rays"] is not None:
+    if "lidar_rays" in batch and batch["lidar_rays"] is not None:
         lidar_rays = batch["lidar_rays"]
         collated_batch["lidar_rays"] = lidar_rays[torch.randint(0, lidar_rays.shape[0]-1, (1024,)), :]
 

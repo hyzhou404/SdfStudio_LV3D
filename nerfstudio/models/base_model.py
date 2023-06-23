@@ -179,7 +179,12 @@ class Model(nn.Module):
             ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
             outputs = self.forward(ray_bundle=ray_bundle)
             for output_name, output in outputs.items():  # type: ignore
-                outputs_lists[output_name].append(output)
+                if torch.is_tensor(output):
+                    output_cpu = output.detach().cpu()
+                    outputs_lists[output_name].append(output_cpu)
+                else:
+                    # TODO: If save non-tensor vars, memory in cuda will not released
+                    pass
         outputs = {}
         for output_name, outputs_list in outputs_lists.items():
             if not torch.is_tensor(outputs_list[0]):

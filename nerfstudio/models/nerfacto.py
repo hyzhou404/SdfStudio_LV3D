@@ -239,7 +239,7 @@ class NerfactoModel(Model):
             )
         return callbacks
 
-    def get_outputs(self, ray_bundle: RayBundle):
+    def get_outputs(self, ray_bundle: RayBundle, lidar_rays=None, sky_mask=None):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
         field_outputs = self.field(ray_samples, compute_normals=self.config.predict_normals)
         weights = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
@@ -357,7 +357,7 @@ class NerfactoModel(Model):
             np.save('/data/hyzhou/data/ray_data/img0_ij.npy', ij)
             exit(0)
 
-        image = batch["image"].to(self.device)
+        image = batch["image"].cpu()
         rgb = outputs["rgb"]
         acc = colormaps.apply_colormap(outputs["accumulation"])
         depth = colormaps.apply_depth_colormap(
@@ -375,11 +375,11 @@ class NerfactoModel(Model):
 
         psnr = self.psnr(image, rgb)
         ssim = self.ssim(image, rgb)
-        lpips = self.lpips(image, rgb)
+        # lpips = self.lpips(image, rgb)
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
-        metrics_dict["lpips"] = float(lpips)
+        # metrics_dict["lpips"] = float(lpips)
 
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
 

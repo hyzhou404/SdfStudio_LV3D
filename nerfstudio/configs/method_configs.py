@@ -452,18 +452,18 @@ method_configs["neus-facto-angelo"] = Config(
 method_configs["neus-facto"] = Config(
     method_name="neus-facto",
     trainer=TrainerConfig(
-        steps_per_eval_image=2500,
-        steps_per_eval_batch=2500,
-        steps_per_save=20000,
-        steps_per_eval_all_images=1000000,  # set to a very large model so we don't eval with all images
-        max_num_iterations=20001,
+        steps_per_eval_image=5000,
+        steps_per_eval_batch=5000,
+        steps_per_save=25000,
+        steps_per_eval_all_images=25000,  # set to a very large model so we don't eval with all images
+        max_num_iterations=50001,
         mixed_precision=False,
     ),
     pipeline=VanillaPipelineConfig(
         datamanager=VanillaDataManagerConfig(
             dataparser=SDFStudioDataParserConfig(),
             train_num_rays_per_batch=2048,
-            eval_num_rays_per_batch=1024,
+            eval_num_rays_per_batch=2048,
             camera_optimizer=CameraOptimizerConfig(
                 mode="off", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
             ),
@@ -478,8 +478,8 @@ method_configs["neus-facto"] = Config(
                 beta_init=0.3,
                 use_appearance_embedding=False,
             ),
-            background_model="none",
-            eval_num_rays_per_chunk=1024,
+            background_model="grid",
+            eval_num_rays_per_chunk=4096,
         ),
     ),
     optimizers={
@@ -756,18 +756,18 @@ method_configs["neus"] = Config(
 method_configs["unisurf"] = Config(
     method_name="unisurf",
     trainer=TrainerConfig(
-        steps_per_eval_image=1000,
+        steps_per_eval_image=5000,
         steps_per_eval_batch=5000,
-        steps_per_save=20000,
-        steps_per_eval_all_images=1000000,  # set to a very large model so we don't eval with all images
+        steps_per_save=10000,
+        steps_per_eval_all_images=20000,  # set to a very large model so we don't eval with all images
         max_num_iterations=40001,
         mixed_precision=False,
     ),
     pipeline=VanillaPipelineConfig(
         datamanager=VanillaDataManagerConfig(
             dataparser=SDFStudioDataParserConfig(),
-            train_num_rays_per_batch=1024,
-            eval_num_rays_per_batch=1024,
+            train_num_rays_per_batch=2048,
+            eval_num_rays_per_batch=2048,
             camera_optimizer=CameraOptimizerConfig(
                 mode="off", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
             ),
@@ -778,12 +778,16 @@ method_configs["unisurf"] = Config(
                 num_layers=2,
                 num_layers_color=2,
                 hidden_dim=256,
+                geo_feat_dim=256,
+                hidden_dim_color=256,
                 bias=0.5,
                 beta_init=0.3,
                 use_appearance_embedding=False,
+                geometric_init=True,
+                use_reflections=True,
             ),
-            background_model="none",
-            eval_num_rays_per_chunk=1024,
+            background_model="grid",
+            eval_num_rays_per_chunk=2048,
         ),
     ),
     optimizers={
@@ -985,27 +989,27 @@ method_configs["neus-acc"] = Config(
 method_configs["nerfacto"] = Config(
     method_name="nerfacto",
     trainer=TrainerConfig(
-        steps_per_eval_batch=5000, steps_per_save=2000, max_num_iterations=30000, mixed_precision=True
+        steps_per_eval_batch=5000, steps_per_save=10000, max_num_iterations=40001, mixed_precision=True
     ),
     pipeline=VanillaPipelineConfig(
         datamanager=VanillaDataManagerConfig(
             dataparser=NerfstudioDataParserConfig(),
-            train_num_rays_per_batch=4096,
-            eval_num_rays_per_batch=4096,
-            camera_optimizer=CameraOptimizerConfig(
-                mode="SO3xR3", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
-            ),
+            train_num_rays_per_batch=2048,
+            eval_num_rays_per_batch=2048,
+            # camera_optimizer=CameraOptimizerConfig(
+            #     mode="SO3xR3", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
+            # ),
         ),
         model=NerfactoModelConfig(eval_num_rays_per_chunk=1 << 15),
     ),
     optimizers={
         "proposal_networks": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": MultiStepSchedulerConfig(max_steps=300000),
+            "scheduler": MultiStepSchedulerConfig(max_steps=400001),
         },
         "fields": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-            "scheduler": MultiStepSchedulerConfig(max_steps=300000),
+            "scheduler": MultiStepSchedulerConfig(max_steps=400001),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),

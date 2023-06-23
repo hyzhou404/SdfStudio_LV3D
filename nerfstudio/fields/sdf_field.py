@@ -34,6 +34,7 @@ from nerfstudio.field_components.encodings import (
     NeRFEncoding,
     PeriodicVolumeEncoding,
     TensorVMEncoding,
+    SHEncoding,
     HashEncoding,
 )
 from nerfstudio.field_components.field_heads import FieldHeadNames
@@ -221,7 +222,19 @@ class SDFField(Field):
         self.max_res = self.config.max_res 
         self.base_res = self.config.base_res 
         self.log2_hashmap_size = self.config.log2_hashmap_size 
-        self.features_per_level = self.config.hash_features_per_level 
+        self.features_per_level = self.config.hash_features_per_level
+
+        # # zipnerf
+        # # num_levels = 10
+        # # max_res = 8192
+        # # neuralangelo
+        # num_levels = 16
+        # max_res = 2048
+        #
+        # base_res = 16
+        # log2_hashmap_size = 21
+        # features_per_level = 4
+
         use_hash = True
         smoothstep = self.config.hash_smoothstep
         self.growth_factor = np.exp((np.log(self.max_res) - np.log(self.base_res)) / (self.num_levels - 1))
@@ -269,14 +282,16 @@ class SDFField(Field):
             off_axis=self.config.off_axis,
         )
 
-        self.direction_encoding = NeRFEncoding(
-            in_dim=3, num_frequencies=4, min_freq_exp=0.0, max_freq_exp=3.0, include_input=True
-        )
+        # self.direction_encoding = NeRFEncoding(
+        #     in_dim=3, num_frequencies=4, min_freq_exp=0.0, max_freq_exp=3.0, include_input=True
+        # )
+        self.direction_encoding = SHEncoding()
 
         # TODO move it to field components
         # MLP with geometric initialization
         dims = [self.config.hidden_dim for _ in range(self.config.num_layers)]
-        in_dim = 3 + self.position_encoding.get_out_dim() + self.encoding.n_output_dims
+        # in_dim = 3 + self.position_encoding.get_out_dim() + self.encoding.n_output_dims
+        in_dim = self.encoding.n_output_dims
         dims = [in_dim] + dims + [1 + self.config.geo_feat_dim]
         self.num_layers = len(dims)
         # TODO check how to merge skip_in to config
@@ -302,10 +317,10 @@ class SDFField(Field):
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.constant_(lin.weight[:, 3:], 0.0)
                     torch.nn.init.normal_(lin.weight[:, :3], 0.0, np.sqrt(2) / np.sqrt(out_dim))
-                elif l in self.skip_in:
-                    torch.nn.init.constant_(lin.bias, 0.0)
-                    torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
-                    torch.nn.init.constant_(lin.weight[:, -(dims[0] - 3) :], 0.0)
+                # elif l in self.skip_in:
+                #     torch.nn.init.constant_(lin.bias, 0.0)
+                #     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
+                #     torch.nn.init.constant_(lin.weight[:, -(dims[0] - 3) :], 0.0)
                 else:
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
@@ -314,6 +329,18 @@ class SDFField(Field):
                 lin = nn.utils.weight_norm(lin)
                 # print("=======", lin.weight.shape)
             setattr(self, "glin" + str(l), lin)
+
+        # self.geo_mlp = tcnn.Network(
+        #     n_input_dims=32,
+        #     n_output_dims=1 + self.config.geo_feat_dim,
+        #     network_config={
+        #         "otype": "FullyFusedMLP",
+        #         "activation": "ReLU",
+        #         "output_activation": "None",
+        #         "n_neurons": self.config.hidden_dim,
+        #         "n_hidden_layers": self.config.num_layers,
+        #     },
+        # )
 
         # laplace function for transform sdf to density from VolSDF
         self.laplace_density = LaplaceDensity(init_val=self.config.beta_init)
@@ -390,6 +417,7 @@ class SDFField(Field):
         else:
             feature = torch.zeros_like(inputs[:, :1].repeat(1, self.encoding.n_output_dims))
 
+
         pe = self.position_encoding(inputs)
         if not self.config.use_position_encoding:
             pe = torch.zeros_like(pe)
@@ -397,6 +425,15 @@ class SDFField(Field):
         inputs = torch.cat((inputs, pe, feature), dim=-1)
 
         x = inputs
+
+        # # pe = self.position_encoding(inputs)
+        # #
+        # # inputs = torch.cat((inputs, pe, feature), dim=-1)
+        # #
+        # # x = inputs
+        # x = feature.float()
+        # # x = torch.cat((inputs, feature), dim=-1)
+        # # x = self.geo_mlp(x)
 
         for l in range(0, self.num_layers - 1):
             lin = getattr(self, "glin" + str(l))

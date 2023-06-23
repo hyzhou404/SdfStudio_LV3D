@@ -140,19 +140,19 @@ class UniSurfModel(SurfaceModel):
 
         # TODO move to base model as other model could also use it?
         if self.training and self.config.smooth_loss_multi > 0.0:
-            if batch["step"] > 40000 and batch["step"] % 10 == 0:
-                # normal_gt = batch["normal"].to(self.device)
-                # normal_gt = normal_gt.view(-1, 4, 4, 3)
-                normal_pred = outputs["normal"]
-                normal_pred = normal_pred.view(-1, 4, 4, 3)
-
-                normal_pred = torch.nn.functional.normalize(normal_pred, p=2, dim=-1)
-                diff_x = torch.mean(torch.diff(normal_pred, dim=1))
-                diff_y = torch.mean(torch.diff(normal_pred, dim=2))
-                loss_dict["normal_smoothness_loss2"] = (diff_x + diff_y) * self.config.mono_normal_loss_mult
-                # loss_dict["normal_smooth_loss2"] = (
-                #     monosdf_normal_diff_loss(normal_pred, normal_gt) * self.config.mono_normal_loss_mult
-                # )
+            # if batch["step"] > 40000 and batch["step"] % 10 == 0:
+            #     # normal_gt = batch["normal"].to(self.device)
+            #     # normal_gt = normal_gt.view(-1, 4, 4, 3)
+            #     normal_pred = outputs["normal"]
+            #     normal_pred = normal_pred.view(-1, 4, 4, 3)
+            #
+            #     normal_pred = torch.nn.functional.normalize(normal_pred, p=2, dim=-1)
+            #     diff_x = torch.mean(torch.diff(normal_pred, dim=1))
+            #     diff_y = torch.mean(torch.diff(normal_pred, dim=2))
+            #     loss_dict["normal_smoothness_loss2"] = (diff_x + diff_y) * self.config.mono_normal_loss_mult
+            #     # loss_dict["normal_smooth_loss2"] = (
+            #     #     monosdf_normal_diff_loss(normal_pred, normal_gt) * self.config.mono_normal_loss_mult
+            #     # )
 
             surface_points = outputs["surface_points"]
 

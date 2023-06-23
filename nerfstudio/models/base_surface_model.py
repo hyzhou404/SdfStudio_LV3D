@@ -298,7 +298,8 @@ class SurfaceModel(Model):
         weights = samples_and_field_outputs["weights"]
         bg_transmittance = samples_and_field_outputs["bg_transmittance"]
 
-        rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
+        use_background_color = (self.config.background_model == 'none')
+        rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights, use_bgc=use_background_color)
         depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         # the rendered depth is point-to-point distance and we should convert to depth
         # depth = depth / ray_bundle.directions_norm
@@ -349,6 +350,7 @@ class SurfaceModel(Model):
         outputs = {
             "rgb": rgb,
             "accumulation": accumulation,
+            # "transmit": bg_transmittance,
             "density": density,
             # "sdf_out": sdf_out,
             "depth": depth,
@@ -356,6 +358,7 @@ class SurfaceModel(Model):
             "weights": weights,
             "ray_points": ray_points,
             "ray_steps": ray_steps,
+            # "occupancy": field_outputs[FieldHeadNames.OCCUPANCY],
             "lidar_occupancy": lidar_occupancy
             # "directions_norm": ray_bundle.directions_norm,  # used to scale z_vals for free space and sdf loss
         }
@@ -421,11 +424,16 @@ class SurfaceModel(Model):
         image = batch["image"].to(self.device)
         loss_dict["rgb_loss"] = self.rgb_loss(image, outputs["rgb"])
         if "sky_mask" in batch:
-            loss_dict["sky_accumulation_loss"] = 2 * torch.nan_to_num(
+            loss_dict["sky_accumulation_loss"] = 0.01*torch.nan_to_num(
                 torch.mean(outputs["accumulation"][batch["sky_mask"]]), 0
             )
+
+            # loss_dict["sky_transmit_loss"] = torch.nan_to_num(
+            #     torch.mean(1 - outputs["transmit"][batch["sky_mask"]]), 0
+            # )
+            #
             # loss_dict["rgb_loss"][batch["sky_mask"]] = 0
-            # loss_dict["sky_density_loss"] = 0.1*torch.mean(outputs["density"][batch["sky_mask"]])
+            # loss_dict["sky_density_loss"] = 0.01 * torch.mean(outputs["occupancy"][batch["sky_mask"]])
         loss_dict["rgb_loss"] = torch.mean(loss_dict["rgb_loss"])
         if self.training:
             # eikonal loss
@@ -441,7 +449,7 @@ class SurfaceModel(Model):
                 )
 
             # monocular normal loss
-            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 and batch["step"] > 1500:
+            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 and batch["step"] > 0:
                 normal_gt = batch["normal"].to(self.device)
                 normal_pred = outputs["normal"]
                 loss_dict["normal_loss"] = (
@@ -583,8 +591,15 @@ class SurfaceModel(Model):
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
-        image = batch["image"].to(self.device)
+
+        # image = batch["image"].to(self.device)
         rgb = outputs["rgb"]
+        image = batch["image"].cpu()
+
+        # torch.save(rgb, '/data/hyzhou/data/infer_save/rgb.pt')
+        # torch.save(image, '/data/hyzhou/data/infer_save/image.pt')
+        # exit(0)
+
         # if "sky_mask" in batch:
         #     rgb[batch["sky_mask"]] = torch.tensor([1.0, 1.0, 1.0]).to(outputs["rgb"].device)
         acc = colormaps.apply_colormap(outputs["accumulation"])
@@ -663,7 +678,7 @@ class SurfaceModel(Model):
             exit(0)
 
         if "normal" in batch:
-            normal_gt = (batch["normal"].to(self.device) + 1.0) / 2.0
+            normal_gt = (batch["normal"].cpu() + 1.0) / 2.0
             combined_normal = torch.cat([normal_gt, normal], dim=1)
         else:
             combined_normal = torch.cat([normal], dim=1)
@@ -698,10 +713,10 @@ class SurfaceModel(Model):
 
         psnr = self.psnr(image, rgb)
         ssim = self.ssim(image, rgb)
-        lpips = self.lpips(image, rgb)
+        # lpips = self.lpips(image, rgb)
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
-        metrics_dict["lpips"] = float(lpips)
+        # metrics_dict["lpips"] = float(lpips)
 
         return metrics_dict, images_dict

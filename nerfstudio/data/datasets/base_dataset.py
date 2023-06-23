@@ -117,7 +117,7 @@ class InputDataset(Dataset):
             data['lidar_rays'] = torch.from_numpy(self._dataparser_outputs.lidar_rays)
         metadata = self.get_metadata(data)
         data.update(metadata)
-        data["image"][data["sky_mask"]] = torch.tensor([1., 1., 1.])
+        # data["image"][data["sky_mask"]] = torch.tensor([1., 1., 1.])
         return data
 
     # pylint: disable=no-self-use

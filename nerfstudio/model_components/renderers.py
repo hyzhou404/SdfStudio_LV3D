@@ -58,7 +58,7 @@ class RGBRenderer(nn.Module):
         background_color: Union[Literal["random", "last_sample"], TensorType[3]] = "random",
         ray_indices: Optional[TensorType["num_samples"]] = None,
         num_rays: Optional[int] = None,
-        sky_mask = None,
+        use_bgc = False,
     ) -> TensorType["bs":..., 3]:
         """Composite samples along ray and render color image
 
@@ -96,7 +96,8 @@ class RGBRenderer(nn.Module):
             background_color = torch.rand_like(comp_rgb).to(rgb.device)
 
         assert isinstance(background_color, torch.Tensor)
-        comp_rgb = comp_rgb + background_color.to(weights.device) * (1.0 - accumulated_weight)
+        if use_bgc:
+            comp_rgb = comp_rgb + background_color.to(weights.device) * (1.0 - accumulated_weight)
 
         return comp_rgb
 
@@ -106,7 +107,7 @@ class RGBRenderer(nn.Module):
         weights: TensorType["bs":..., "num_samples", 1],
         ray_indices: Optional[TensorType["num_samples"]] = None,
         num_rays: Optional[int] = None,
-        sky_mask = None,
+        use_bgc = False,
     ) -> TensorType["bs":..., 3]:
         """Composite samples along ray and render color image
 
@@ -122,7 +123,7 @@ class RGBRenderer(nn.Module):
 
         rgb = self.combine_rgb(
             rgb, weights, background_color=self.background_color,
-            ray_indices=ray_indices, num_rays=num_rays, sky_mask=sky_mask
+            ray_indices=ray_indices, num_rays=num_rays, use_bgc=use_bgc,
         )
         if not self.training:
             torch.clamp_(rgb, min=0.0, max=1.0)

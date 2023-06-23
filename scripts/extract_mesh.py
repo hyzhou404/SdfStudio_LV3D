@@ -41,9 +41,9 @@ class ExtractMesh:
     # extract the mesh using occupancy field (unisurf) or SDF, default sdf
     is_occupancy: bool = False
     """Minimum of the bounding box."""
-    bounding_box_min: Tuple[float, float, float] = (-1, -1.0, -2)
+    bounding_box_min: Tuple[float, float, float] = (-1, -0.5, -2)
     """Maximum of the bounding box."""
-    bounding_box_max: Tuple[float, float, float] = (1, 0.3, 2)
+    bounding_box_max: Tuple[float, float, float] = (1, 1.0, 2)
     """marching cube threshold"""
     marching_cube_threshold: float = 0.0
     """create visibility mask"""

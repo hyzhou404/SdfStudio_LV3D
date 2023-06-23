@@ -158,9 +158,9 @@ class SDFStudioDataParserConfig(DataParserConfig):
     """Directory specifying location of data."""
     include_sky_mask: bool = True
     """whether or not to load sky mask"""
-    include_road_mask: bool = True
+    include_road_mask: bool = False
     """whether or not to load road mask"""
-    include_mono_prior: bool = True
+    include_mono_prior: bool = False
     """whether or not to load monocular depth and normal """
     include_sensor_depth: bool = False
     """whether or not to load sensor depth"""
@@ -168,7 +168,7 @@ class SDFStudioDataParserConfig(DataParserConfig):
     """whether or not to load foreground mask"""
     include_sfm_points: bool = False
     """whether or not to load sfm points"""
-    include_lidar: bool = True
+    include_lidar: bool = False
     """whether or not to load lidar data"""
     downscale_factor: int = 1
     scene_scale: float = 2.0
@@ -183,7 +183,7 @@ class SDFStudioDataParserConfig(DataParserConfig):
     pairs_sorted_ascending: Optional[bool] = True
     """if src image pairs are sorted in ascending order by similarity i.e. 
     the last element is the most similar to the first (ref)"""
-    skip_every_for_val_split: int = 20
+    skip_every_for_val_split: int = 10
     """sub sampling validation images"""
     train_val_no_overlap: bool = False
     """remove selected / sampled validation images from training set"""
@@ -254,9 +254,9 @@ class SDFStudio(DataParser):
 
             if self.config.include_sky_mask:
                 sky_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_sky_mask.npy'))
-                dilate_sky_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_dilatesky_mask.npy'))
+                # dilate_sky_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_dilatesky_mask.npy'))
                 sky_masks.append(torch.from_numpy(sky_mask).bool())
-                dilate_sky_masks.append(torch.from_numpy(dilate_sky_mask).bool())
+                # dilate_sky_masks.append(torch.from_numpy(dilate_sky_mask).bool())
 
             if self.config.include_road_mask:
                 road_mask = np.load(self.config.data / (frame["rgb_path"][:-4] + '_ground_mask.npy'))
@@ -264,13 +264,13 @@ class SDFStudio(DataParser):
 
             if self.config.include_mono_prior:
                 assert meta["has_mono_prior"]
-                assert self.config.include_sky_mask is True
+                # assert self.config.include_sky_mask is True
                 # load mono depth
                 disp = np.load(self.config.data / frame["mono_depth_path"])
                 depth = np.clip(1/(disp+1e-6), 0, meta["scene_box"]["far"])
 
-                sky_mask = np.load(self.config.data / frame["mono_depth_path"].replace('depth', 'sky_mask'))
-                depth[sky_mask == 0] = meta["scene_box"]["far"]
+                # sky_mask = np.load(self.config.data / frame["mono_depth_path"].replace('depth', 'sky_mask'))
+                # depth[sky_mask == 0] = meta["scene_box"]["far"]
 
                 depth_images.append(torch.from_numpy(depth).float())
 
@@ -351,6 +351,9 @@ class SDFStudio(DataParser):
         )
 
         height, width = meta["height"], meta["width"]
+        if type(height) == type([]):
+            height, width = torch.tensor(height), torch.tensor(width)
+            height, width = height[indices], width[indices]
         cameras = Cameras(
             fx=fx,
             fy=fy,
@@ -368,7 +371,7 @@ class SDFStudio(DataParser):
         if self.config.include_sky_mask:
             additional_inputs_dict = {
                 "sky": {"func": get_sky_masks, "kwargs": {"sky_masks": sky_masks}},
-                "dilate_sky": {"func": get_dilate_sky_masks, "kwargs": {"dilate_sky_masks": dilate_sky_masks}}
+                # "dilate_sky": {"func": get_dilate_sky_masks, "kwargs": {"dilate_sky_masks": dilate_sky_masks}}
             }
         else:
             additional_inputs_dict = {}

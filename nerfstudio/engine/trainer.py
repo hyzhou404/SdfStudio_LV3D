@@ -45,8 +45,34 @@ from nerfstudio.utils.decorators import (
 from nerfstudio.utils.misc import step_check
 from nerfstudio.utils.writer import EventName, TimeWriter
 from nerfstudio.viewer.server import viewer_utils
+import json
+import numpy as np
+from random import random
 
 CONSOLE = Console(width=120)
+
+
+def interp(points, num_interp_points):
+    new_points = np.zeros((len(points) + (len(points) - 1) * num_interp_points, 3))
+    new_points[:, 0] = np.interp(np.linspace(0, len(points) - 1, len(points) + (len(points) - 1) * num_interp_points),
+                                 np.arange(len(points)), points[:, 0])
+    new_points[:, 1] = np.interp(np.linspace(0, len(points) - 1, len(points) + (len(points) - 1) * num_interp_points),
+                                 np.arange(len(points)), points[:, 1])
+    new_points[:, 2] = np.interp(np.linspace(0, len(points) - 1, len(points) + (len(points) - 1) * num_interp_points),
+                                 np.arange(len(points)), points[:, 2])
+
+    extent_n = new_points.shape[0] // 2
+    move = np.linspace(0, 1, num=extent_n)
+
+    front = new_points[np.argmax(new_points[:, 2])][None, :]
+    front_points = np.repeat(front, extent_n, axis=0)
+    front_points[:, 2] += move
+    rear = new_points[np.argmin(new_points[:, 2])][None, :]
+    rear_points = np.repeat(rear, extent_n, axis=0)
+    rear_points[:, 2] -= move
+
+    new_points = np.concatenate([front_points, new_points, rear_points])
+    return new_points
 
 
 class Trainer:
@@ -136,6 +162,15 @@ class Trainer:
         with TimeWriter(writer, EventName.TOTAL_TRAIN_TIME):
             num_iterations = self.config.trainer.max_num_iterations
             step = 0
+
+            # with open('/data/hyzhou/data/kitti_neus_v2/frame50_3353_lidar/meta_data.json', 'r') as rf:
+            #     meta_data = json.load(rf)
+            # cam_pos = np.stack([np.array(frame['camtoworld'])[:3, 3] for frame in meta_data['frames']])
+            # cam_pos[:, 1] += 0.1
+            # s1 = interp(cam_pos[::2], 5)
+            # s2 = interp(cam_pos[1::2], 5)
+            # points = torch.from_numpy(np.concatenate([s1, s2])).to(self.device).float()
+
             for step in range(self._start_step, self._start_step + num_iterations):
                 # if step >= 0:
                 #     print('Early Stop!')
@@ -152,6 +187,11 @@ class Trainer:
                         )
 
                     # time the forward pass
+                    # if step > 3000:
+                    #     loss, loss_dict, metrics_dict = self.train_iteration(step)
+                    # else:
+                    #     loss, loss_dict, metrics_dict = self.geo_train_iteration(step, points)
+
                     loss, loss_dict, metrics_dict = self.train_iteration(step)
 
                     # training callbacks after the training iteration
@@ -330,6 +370,38 @@ class Trainer:
         # only return the last accumulate_grad_step's loss and metric for logging
         # Merging loss and metrics dict into a single output.
         return loss, loss_dict, metrics_dict
+
+    @profiler.time_function
+    def geo_train_iteration(self, step, points):
+        self.optimizers.zero_grad_all()
+        cpu_or_cuda_str = self.device.split(":")[0]
+
+        train_points, sdf_value = [], []
+        for i in range(100):
+            new_points = torch.clone(points)
+            new_points[:, 0] += (1.5 if random() < 0.5 else -1.5) * random()
+            train_points.append(new_points)
+            sdf_value.append(torch.zeros(new_points.shape[0], device=self.device))
+        for i in range(900):
+            new_points = torch.clone(points)
+            new_points[:, 0] += (1.5 if random() < 0.5 else -1.5) * random()
+            z = (3 if random() < 0.5 else -3) * torch.rand(new_points.shape[0], device=self.device)
+            new_points[:, 1] += z
+            train_points.append(new_points)
+            sdf_value.append(-z)
+        train_points = torch.cat(train_points)
+        sdf_value = torch.cat(sdf_value)
+
+        with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
+            sdf = self.pipeline.model.field.forward_geonetwork(train_points)[:, 0]
+            loss = torch.mean((sdf - sdf_value)**2)
+        self.grad_scaler.scale(loss).backward()  # type: ignore
+        self.optimizers.optimizer_scaler_step_all(self.grad_scaler)
+        self.grad_scaler.update()
+        self.optimizers.scheduler_step_all(step)
+
+        # Merging loss and metrics dict into a single output.
+        return loss, {'sdf_loss': loss}, {}
 
     @check_eval_enabled
     @profiler.time_function
