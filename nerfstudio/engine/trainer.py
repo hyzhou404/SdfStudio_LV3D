@@ -382,7 +382,7 @@ class Trainer:
             new_points[:, 0] += (1.5 if random() < 0.5 else -1.5) * random()
             train_points.append(new_points)
             sdf_value.append(torch.zeros(new_points.shape[0], device=self.device))
-        for i in range(900):
+        for i in range(600):
             new_points = torch.clone(points)
             new_points[:, 0] += (1.5 if random() < 0.5 else -1.5) * random()
             z = (3 if random() < 0.5 else -3) * torch.rand(new_points.shape[0], device=self.device)

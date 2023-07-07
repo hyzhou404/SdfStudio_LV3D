@@ -22,6 +22,7 @@ from abc import abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type
+from torchtyping import TensorType
 
 import torch
 from torch import nn
@@ -71,6 +72,8 @@ class Model(nn.Module):
         num_train_data: int,
         world_size: int = 1,
         local_rank: int = 0,
+        poses: TensorType = None,
+        scale: float = 1,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -81,6 +84,8 @@ class Model(nn.Module):
         self.collider = None
         self.world_size = world_size
         self.local_rank = local_rank
+        self.poses = poses
+        self.scale = scale
 
         self.populate_modules()  # populate the modules
         self.callbacks = None

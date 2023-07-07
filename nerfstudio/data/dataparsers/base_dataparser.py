@@ -58,6 +58,8 @@ class DataparserOutputs:
     """Color of dataset background."""
     scene_box: SceneBox = SceneBox()
     """Scene box of dataset. Used to bound the scene or provide the scene scale depending on model."""
+    scene_scale: float = 1.0
+    """Scene scale of dataset."""
     mask_filenames: Optional[List[Path]] = None
     """Filenames for any masks that are required"""
     depths: Optional[torch.Tensor] = None

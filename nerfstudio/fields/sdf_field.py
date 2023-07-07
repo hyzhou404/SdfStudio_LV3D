@@ -203,6 +203,9 @@ class SDFField(Field):
         num_images: int,
         use_average_appearance_embedding: bool = False,
         spatial_distortion: Optional[SpatialDistortion] = None,
+        poses: TensorType = None,
+        scale: float = 1.0,
+        hashgrid_len: float = 20.0,
     ) -> None:
         super().__init__()
         self.config = config
@@ -224,23 +227,19 @@ class SDFField(Field):
         self.log2_hashmap_size = self.config.log2_hashmap_size 
         self.features_per_level = self.config.hash_features_per_level
 
-        # # zipnerf
-        # # num_levels = 10
-        # # max_res = 8192
-        # # neuralangelo
-        # num_levels = 16
-        # max_res = 2048
-        #
-        # base_res = 16
-        # log2_hashmap_size = 21
-        # features_per_level = 4
+        self.poses = poses
+        self.scale = scale
+        self.hashgrid_len = hashgrid_len * 1.3
+        # self.grid_len = 20
+        # self.grid_len /= self.scale
+        # self.offset = torch.tensor([0, 5, 0]) / self.scale
 
         use_hash = True
         smoothstep = self.config.hash_smoothstep
         self.growth_factor = np.exp((np.log(self.max_res) - np.log(self.base_res)) / (self.num_levels - 1))
 
         if self.config.encoding_type == "hash":
-            # feature encoding
+            # Single Feature Encoding
             self.encoding = tcnn.Encoding(
                 n_input_dims=3,
                 encoding_config={
@@ -253,6 +252,74 @@ class SDFField(Field):
                     "interpolation": "Smoothstep" if smoothstep else "Linear",
                 },
             )
+
+            # # MegaNerf Encoding
+            # self.encoding = []
+            # self.hash_aabb = torch.tensor([])
+            # z = -1.3
+            # while z < 1:
+            #     self.encoding.append(
+            #         tcnn.Encoding(
+            #             n_input_dims=3,
+            #             encoding_config={
+            #                 "otype": "HashGrid" if use_hash else "DenseGrid",
+            #                 "n_levels": self.num_levels,
+            #                 "n_features_per_level": self.features_per_level,
+            #                 "log2_hashmap_size": self.log2_hashmap_size,
+            #                 "base_resolution": self.base_res,
+            #                 "per_level_scale": self.growth_factor,
+            #                 "interpolation": "Smoothstep" if smoothstep else "Linear",
+            #             },
+            #         )
+            #     )
+            #     new_aabb = torch.tensor([[[-self.hashgrid_len, -self.hashgrid_len, z],
+            #                               [self.hashgrid_len, self.hashgrid_len, z+self.hashgrid_len]]])
+            #     self.hash_aabb = torch.cat([self.hash_aabb, new_aabb])
+            #     z += self.hashgrid_len
+            # self.hash_aabb = self.hash_aabb.to('cuda:0')
+            # self.offsets = (self.hash_aabb[:, 0, :] + self.hash_aabb[:, 1, :]) / 2
+            # # print('aabbs', self.hash_aabb)
+            # # test_points = torch.tensor([[0, 0, -1.0], [0, 0, -0.6], [0, 0, 0.7]]).cuda()
+            # # mask = self.point_in_aabb(test_points)
+            # # print('mask', mask)
+            # # grid_idx = torch.nonzero(mask, as_tuple=True)[1]
+            # # print('grid idx', grid_idx)
+            # # trans = self.offsets[grid_idx]
+            # # print('trans', trans)
+            # # positions = ((test_points - trans) / self.hashgrid_len * 2 + 1) / 2.01
+            # # print('pos', positions)
+            # # exit(0)
+
+            # LocalRF Encoding
+            # scene AABB will not work, all rays should reset far according to hash grid AABBs.
+            # self.encoding = []
+            # self.hash_aabb = torch.tensor([])
+            # for pose in self.poses:
+            #     cam_pos = pose[:3, 3]
+            #     if torch.any(self.point_in_aabb(cam_pos)):
+            #        continue
+            #     self.encoding.append(
+            #         tcnn.Encoding(
+            #             n_input_dims=3,
+            #             encoding_config={
+            #                 "otype": "HashGrid" if use_hash else "DenseGrid",
+            #                 "n_levels": self.num_levels,
+            #                 "n_features_per_level": self.features_per_level,
+            #                 "log2_hashmap_size": self.log2_hashmap_size,
+            #                 "base_resolution": self.base_res,
+            #                 "per_level_scale": self.growth_factor,
+            #                 "interpolation": "Smoothstep" if smoothstep else "Linear",
+            #             },
+            #         )
+            #     )
+            #     lo = cam_pos + self.offset - (self.grid_len / 2)
+            #     hi = cam_pos + self.offset + (self.grid_len / 2)
+            #     new_aabb = torch.stack([lo, hi])[None, ...]
+            #     self.hash_aabb = torch.cat([self.hash_aabb, new_aabb])
+            # self.hash_aabb = self.hash_aabb.to('cuda:0')
+            # torch.save(self.hash_aabb, '/data4/hyzhou/exp/LocalRF/hash_aabb.pt')
+            # torch.save(self.poses, '/data4/hyzhou/exp/LocalRF/poses.pt')
+
             self.hash_encoding_mask = torch.ones(
                 self.num_levels * self.features_per_level,
                 dtype=torch.float32,
@@ -290,8 +357,14 @@ class SDFField(Field):
         # TODO move it to field components
         # MLP with geometric initialization
         dims = [self.config.hidden_dim for _ in range(self.config.num_layers)]
-        # in_dim = 3 + self.position_encoding.get_out_dim() + self.encoding.n_output_dims
-        in_dim = self.encoding.n_output_dims
+        if not self.config.use_position_encoding:
+            if isinstance(self.encoding, list):
+                in_dim = self.encoding[0].n_output_dims
+            else:
+                in_dim = self.encoding.n_output_dims
+        else:
+            in_dim = 3 + self.position_encoding.get_out_dim() + self.encoding.n_output_dims
+
         dims = [in_dim] + dims + [1 + self.config.geo_feat_dim]
         self.num_layers = len(dims)
         # TODO check how to merge skip_in to config
@@ -317,10 +390,10 @@ class SDFField(Field):
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.constant_(lin.weight[:, 3:], 0.0)
                     torch.nn.init.normal_(lin.weight[:, :3], 0.0, np.sqrt(2) / np.sqrt(out_dim))
-                # elif l in self.skip_in:
-                #     torch.nn.init.constant_(lin.bias, 0.0)
-                #     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
-                #     torch.nn.init.constant_(lin.weight[:, -(dims[0] - 3) :], 0.0)
+                elif l in self.skip_in:
+                    torch.nn.init.constant_(lin.bias, 0.0)
+                    torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
+                    torch.nn.init.constant_(lin.weight[:, -(dims[0] - 3) :], 0.0)
                 else:
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
@@ -397,6 +470,29 @@ class SDFField(Field):
         self._cos_anneal_ratio = 1.0
         self.numerical_gradients_delta = 0.0001
 
+        self.grads = {}
+
+    def save_grad(self, name):
+        def hook(grad):
+            self.grads[name] = grad
+
+        return hook
+
+    def point_in_aabb(self, point):
+        assert isinstance(self.hash_aabb, TensorType)
+        if self.hash_aabb.shape[0] == 0:
+            return torch.tensor([False])
+        if point.dim() == 1:
+            lo_mask = torch.all(point > self.hash_aabb[:, 0, :], dim=-1)
+            hi_mask = torch.all(point <= self.hash_aabb[:, 1, :], dim=-1)
+        elif point.dim() == 2:
+            lo_mask = torch.all(point[:, None, :] > self.hash_aabb[None, :, 0, :], dim=-1)
+            hi_mask = torch.all(point[:, None, :] <= self.hash_aabb[None, :, 1, :], dim=-1)
+        else:
+            print(point.shape, self.hash_aabb.shape)
+            raise NotImplementedError
+        return lo_mask & hi_mask
+
     def set_cos_anneal_ratio(self, anneal: float) -> None:
         """Set the anneal value for the proposal network."""
         self._cos_anneal_ratio = anneal
@@ -409,9 +505,31 @@ class SDFField(Field):
         """forward the geonetwork"""
         if self.use_grid_feature:
             #TODO normalize inputs depending on the whether we model the background or not
-            positions = (inputs + 2.0) / 4.0
-            # positions = (inputs + 1.0) / 2.0
-            feature = self.encoding(positions)
+            # positions = (inputs + 2.0) / 4.0
+            if isinstance(self.encoding, list):
+                mask = self.point_in_aabb(inputs)
+                grid_idx = torch.nonzero(mask, as_tuple=True)[1]
+                # if mask.shape[0] != grid_idx.shape[0]:
+                #     print(mask.shape, grid_idx.shape)
+                #     mask_sum = torch.sum(mask, dim=-1)
+                #     abnormal = torch.nonzero(mask_sum == 0, as_tuple=True)[0]
+                #
+                #     print(inputs[abnormal])
+                #     n = torch.linalg.norm(inputs[abnormal], ord=float('inf'), dim=-1)
+                #     print(torch.max(n))
+                #     exit(0)
+                trans = self.offsets[grid_idx]
+                positions = ((inputs - trans) / self.hashgrid_len * 2 + 1) / 2.01
+                feature = torch.zeros((inputs.shape[0], self.encoding[0].n_output_dims), device=inputs.device)
+                for idx, encoder in enumerate(self.encoding):
+                    sample_idx = torch.nonzero(grid_idx == idx, as_tuple=True)[0]
+                    feature[sample_idx] = encoder(positions[sample_idx]).float()
+                # feature.register_hook(self.save_grad('hash_feat_grad'))
+            else:
+                # assert torch.all((-2 < inputs) & (inputs < 2))
+                positions = (inputs + 1.2) / 2.4
+
+                feature = self.encoding(positions)
             # mask feature
             feature = feature * self.hash_encoding_mask.to(feature.device)
         else:
@@ -420,9 +538,9 @@ class SDFField(Field):
 
         pe = self.position_encoding(inputs)
         if not self.config.use_position_encoding:
-            pe = torch.zeros_like(pe)
-        
-        inputs = torch.cat((inputs, pe, feature), dim=-1)
+            inputs = feature.float()
+        else:
+            inputs = torch.cat((inputs, pe, feature), dim=-1)
 
         x = inputs
 
@@ -445,6 +563,10 @@ class SDFField(Field):
 
             if l < self.num_layers - 2:
                 x = self.softplus(x)
+
+        # # NeUDF
+        # x = self.softplus(x)
+
         return x
 
     def get_sdf(self, ray_samples: RaySamples):
@@ -479,6 +601,8 @@ class SDFField(Field):
                 ],
                 dim=0,
             )
+            # n = torch.linalg.norm(points, ord=float('inf'), dim=-1)
+            # print('ckpt2', torch.max(n))
 
             points_sdf = self.forward_geonetwork(points.view(-1, 3))[..., 0].view(6, *x.shape[:-1])
             gradients = torch.stack(
@@ -546,8 +670,13 @@ class SDFField(Field):
         estimated_next_sdf = sdf + iter_cos * ray_samples.deltas * 0.5
         estimated_prev_sdf = sdf - iter_cos * ray_samples.deltas * 0.5
 
+        # Neus
         prev_cdf = torch.sigmoid(estimated_prev_sdf * inv_s)
         next_cdf = torch.sigmoid(estimated_next_sdf * inv_s)
+
+        # # NeUDF
+        # prev_cdf = (estimated_prev_sdf * inv_s / (1 + estimated_prev_sdf * inv_s)).clip(0., 1e6)
+        # next_cdf = (estimated_next_sdf * inv_s / (1 + estimated_next_sdf * inv_s)).clip(0., 1e6)
 
         p = prev_cdf - next_cdf
         c = prev_cdf
@@ -669,6 +798,8 @@ class SDFField(Field):
         points_norm = inputs.norm(dim=-1)
         # compute gradient in constracted space
         inputs.requires_grad_(True)
+        # n = torch.linalg.norm(inputs, ord=float('inf'), dim=-1)
+        # print('ckpt1', torch.max(n))
         with torch.enable_grad():
             h = self.forward_geonetwork(inputs)
             sdf, geo_feature = torch.split(h, [1, self.config.geo_feat_dim], dim=-1)

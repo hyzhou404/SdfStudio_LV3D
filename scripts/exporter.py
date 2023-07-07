@@ -74,7 +74,9 @@ class ExportPointCloud(Exporter):
         # Increase the batchsize to speed up the evaluation.
         pipeline.datamanager.train_pixel_sampler.num_rays_per_batch = self.num_rays_per_batch
 
-        pcd = generate_point_cloud(
+        print(sum([p.numel() for p in pipeline.model.parameters()]))
+
+        pcd, points, locs = generate_point_cloud(
             pipeline=pipeline,
             num_points=self.num_points,
             remove_outliers=self.remove_outliers,
@@ -92,6 +94,8 @@ class ExportPointCloud(Exporter):
         CONSOLE.print(f"[bold green]:white_check_mark: Generated {pcd}")
         CONSOLE.print("Saving Point Cloud...")
         o3d.io.write_point_cloud(str(self.output_dir / "point_cloud.ply"), pcd)
+        torch.save(points, str(self.output_dir / "points.pt"))
+        torch.save(locs, str(self.output_dir / "locs.pt"))
         print("\033[A\033[A")
         CONSOLE.print("[bold green]:white_check_mark: Saving Point Cloud")
 

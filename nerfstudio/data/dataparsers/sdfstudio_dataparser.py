@@ -99,11 +99,11 @@ def get_depths_and_normals(image_idx: int, depths, normals):
     """
 
     # depth
-    depth = depths[image_idx]
+    # depth = depths[image_idx]
     # normal
     normal = normals[image_idx]
 
-    return {"depth": depth, "normal": normal}
+    return {"normal": normal}
 
 
 def get_sensor_depths(image_idx: int, sensor_depths):
@@ -156,7 +156,7 @@ class SDFStudioDataParserConfig(DataParserConfig):
     """target class to instantiate"""
     data: Path = Path("data/DTU/scan65")
     """Directory specifying location of data."""
-    include_sky_mask: bool = True
+    include_sky_mask: bool = False
     """whether or not to load sky mask"""
     include_road_mask: bool = False
     """whether or not to load road mask"""
@@ -185,7 +185,7 @@ class SDFStudioDataParserConfig(DataParserConfig):
     the last element is the most similar to the first (ref)"""
     skip_every_for_val_split: int = 10
     """sub sampling validation images"""
-    train_val_no_overlap: bool = False
+    train_val_no_overlap: bool = True
     """remove selected / sampled validation images from training set"""
     auto_orient: bool = False
     """automatically orient the scene such that the up direction is the same as the viewer's up direction"""
@@ -203,14 +203,26 @@ class SDFStudio(DataParser):
         # load meta data
         meta = load_from_json(self.config.data / "meta_data.json")
 
-        indices = list(range(len(meta["frames"])))
+        all_indices = list(range(len(meta["frames"])))
+        train_indices = [i for i in all_indices if (i % 4 == 0 or i % 4 == 1)]
+        eval_indices = [i for i in all_indices if (i % 4 == 2)]
+        # eval_indices = [20, 40, 60, 80]
+        # eval_indices = [10, 40, 60, 80]
+        # eval_indices = [30, 60, 90, 120, 180]
         # subsample to avoid out-of-memory for validation set
         if split != "train" and self.config.skip_every_for_val_split >= 1:
-            indices = [i for i in indices if (i+1) % self.config.skip_every_for_val_split == 0]
+            # indices = [i for i in indices if (i+1) % self.config.skip_every_for_val_split == 0]
+            indices = eval_indices[::3]
+            # indices = train_indices[::6]
+            # indices = [30, 210]
         else:
+            indices = train_indices
             # if you use this option, training set should not contain any image in validation set
-            if self.config.train_val_no_overlap:
-                indices = [i for i in indices if (i+1) % self.config.skip_every_for_val_split != 0]
+            # if self.config.train_val_no_overlap:
+            #     indices = [i for i in all_indices if i not in eval_indices]
+            #     # indices = [i for i in indices if (i+1) % self.config.skip_every_for_val_split != 0]
+            # else:
+            #     indices = all_indices
 
         image_filenames = []
         depth_images = []
@@ -227,6 +239,7 @@ class SDFStudio(DataParser):
         cx = []
         cy = []
         camera_to_worlds = []
+        scene_scale = meta.get('scale', 1)
         for i, frame in enumerate(meta["frames"]):
             if i not in indices:
                 continue
@@ -266,13 +279,13 @@ class SDFStudio(DataParser):
                 assert meta["has_mono_prior"]
                 # assert self.config.include_sky_mask is True
                 # load mono depth
-                disp = np.load(self.config.data / frame["mono_depth_path"])
-                depth = np.clip(1/(disp+1e-6), 0, meta["scene_box"]["far"])
+                # disp = np.load(self.config.data / frame["mono_depth_path"])
+                # depth = 1/(disp+1e-6)
 
                 # sky_mask = np.load(self.config.data / frame["mono_depth_path"].replace('depth', 'sky_mask'))
                 # depth[sky_mask == 0] = meta["scene_box"]["far"]
 
-                depth_images.append(torch.from_numpy(depth).float())
+                # depth_images.append(torch.from_numpy(depth).float())
 
                 # load mono normal
                 normal = np.load(self.config.data / frame["mono_normal_path"])
@@ -341,13 +354,16 @@ class SDFStudio(DataParser):
 
         # scene box from meta data
         meta_scene_box = meta["scene_box"]
-        aabb = torch.tensor(meta_scene_box["aabb"], dtype=torch.float32)
+        # aabb = torch.tensor(meta_scene_box["aabb"], dtype=torch.float32)
+        hashgrid_len = 30 / scene_scale / 2
+        aabb = torch.tensor([[-hashgrid_len, -hashgrid_len, -1.0], [hashgrid_len, hashgrid_len, 1.0]])
         scene_box = SceneBox(
             aabb=aabb,
             near=meta_scene_box["near"],
             far=meta_scene_box["far"],
             radius=meta_scene_box["radius"],
             collider_type=meta_scene_box["collider_type"],
+            hashgrid_len=hashgrid_len * 2,
         )
 
         height, width = meta["height"], meta["width"]
@@ -436,6 +452,7 @@ class SDFStudio(DataParser):
             image_filenames=image_filenames,
             cameras=cameras,
             scene_box=scene_box,
+            scene_scale=scene_scale,
             additional_inputs=additional_inputs_dict,
             depths=depth_images,
             normals=normal_images,

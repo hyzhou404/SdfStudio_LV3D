@@ -42,6 +42,9 @@ from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.configs.base_config import Config  # pylint: disable=unused-import
 from nerfstudio.pipelines.base_pipeline import Pipeline
 from nerfstudio.utils.rich_utils import ItersPerSecColumn
+from copy import deepcopy
+from nerfstudio.cameras.cameras import Cameras, CameraType
+from nerfstudio.model_components.ray_generators import RayGenerator
 
 CONSOLE = Console(width=120)
 
@@ -81,6 +84,62 @@ def get_mesh_from_filename(filename: str, target_num_faces: Optional[int] = None
         ms.meshing_decimation_quadric_edge_collapse(targetfacenum=target_num_faces)
     mesh = ms.current_mesh()
     return get_mesh_from_pymeshlab_mesh(mesh)
+
+
+def get_dense_cameras(cameras, inter_num):
+    new_cameras = []
+    prev_camera = cameras[0]
+    for camera in cameras[1:]:
+        prev_pos = prev_camera.camera_to_worlds
+        next_pos = camera.camera_to_worlds
+        direct = next_pos[:3, 3] - prev_pos[:3, 3]
+        biases = torch.linspace(0, 1, inter_num+1)[:-1]
+        for bias in biases:
+            temp_cam = deepcopy(prev_camera)
+            temp_cam.camera_to_worlds[:3, 3] += direct * bias
+            new_cameras.append(temp_cam)
+        prev_camera = camera
+    new_cameras.append(cameras[-1])
+    return new_cameras
+
+
+def merge_cameras(cam_list):
+    fx, fy, cx, cy, height, width, camera_to_worlds = [], [], [], [], [], [], []
+    for cam in cam_list:
+        fx.append(cam.fx)
+        fy.append(cam.fy)
+        cx.append(cam.cx)
+        cy.append(cam.cy)
+        height.append(cam.height)
+        width.append(cam.width)
+        camera_to_worlds.append(cam.camera_to_worlds)
+    fx = torch.tensor(fx)
+    fy = torch.tensor(fy)
+    cx = torch.tensor(cx)
+    cy = torch.tensor(cy)
+    height = torch.tensor(height)
+    width = torch.tensor(width)
+    camera_to_worlds = torch.stack(camera_to_worlds)
+    cameras = Cameras(
+        fx=fx,
+        fy=fy,
+        cx=cx,
+        cy=cy,
+        height=height,
+        width=width,
+        camera_to_worlds=camera_to_worlds,
+        camera_type=CameraType.PERSPECTIVE,
+    )
+    return cameras
+
+
+def pixel_sample(num_rays_per_batch, sample_shape, device):
+    indices = torch.floor(
+        torch.rand((num_rays_per_batch, 3), device=device) * sample_shape
+    ).long()
+
+    c, y, x = (i.flatten() for i in torch.split(indices, 1, dim=-1))
+    return c, y, x
 
 
 def generate_point_cloud(
@@ -124,14 +183,28 @@ def generate_point_cloud(
         TimeRemainingColumn(elapsed_when_finished=True, compact=True),
     )
     points = []
+    locs = []
     rgbs = []
     normals = []
+    # device = pipeline.datamanager.device
+    # train_cameras = pipeline.datamanager.train_dataset.cameras
+    # lt_train_cameras = train_cameras[::2]
+    # rt_train_cameras = train_cameras[1::2]
+    # lt_cameras = get_dense_cameras(lt_train_cameras, 9)
+    # rt_cameras = get_dense_cameras(rt_train_cameras, 9)
+    # dense_cameras = merge_cameras(lt_cameras + rt_cameras).to(device)
+    # sample_shape = torch.tensor([len(dense_cameras), dense_cameras[0].height, dense_cameras[0].width], device=device)
+    pipeline.datamanager.train_pixel_sampler.num_rays_per_batch = 2048
     with progress as progress_bar:
         task = progress_bar.add_task("Generating Point Cloud", total=num_points)
         while not progress_bar.finished:
             torch.cuda.empty_cache()
             with torch.no_grad():
-                ray_bundle, _ = pipeline.datamanager.next_train(0)
+                # c, y, x = pixel_sample(4096, sample_shape, device)
+                # coord = torch.stack([y, x], dim=-1)
+                # ray_bundle = dense_cameras.generate_rays(c.unsqueeze(-1), coord)
+                ray_bundle, batch = pipeline.datamanager.next_train(0)
+                ray_bundle = ray_bundle[~batch['sky_mask']]
                 outputs = pipeline.model(ray_bundle)
             if rgb_output_name not in outputs:
                 CONSOLE.rule("Error", style="red")
@@ -153,6 +226,7 @@ def generate_point_cloud(
                     sys.exit(1)
                 normal = outputs[normal_output_name]
             point = ray_bundle.origins + ray_bundle.directions * depth
+            loc = ray_bundle.origins
 
             if use_bounding_box:
                 comp_l = torch.tensor(bounding_box_min, device=point.device)
@@ -163,16 +237,19 @@ def generate_point_cloud(
                 mask = torch.all(torch.concat([point > comp_l, point < comp_m], dim=-1), dim=-1)
                 point = point[mask]
                 rgb = rgb[mask]
+                loc = loc[mask]
                 if normal_output_name is not None:
                     normal = normal[mask]
 
             points.append(point)
             rgbs.append(rgb)
+            locs.append(loc)
             if normal_output_name is not None:
                 normals.append(normal)
             progress.advance(task, point.shape[0])
     points = torch.cat(points, dim=0)
     rgbs = torch.cat(rgbs, dim=0)
+    locs = torch.cat(locs, dim=0)
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points.float().cpu().numpy())
@@ -181,7 +258,8 @@ def generate_point_cloud(
     ind = None
     if remove_outliers:
         CONSOLE.print("Cleaning Point Cloud")
-        pcd, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=std_ratio)
+        pcd, ind = pcd.remove_statistical_outlier(nb_neighbors=40, std_ratio=1)
+        points, locs = points[ind], locs[ind]
         print("\033[A\033[A")
         CONSOLE.print("[bold green]:white_check_mark: Cleaning Point Cloud")
 
@@ -202,7 +280,7 @@ def generate_point_cloud(
             normals = normals[ind]
         pcd.normals = o3d.utility.Vector3dVector(normals.float().cpu().numpy())
 
-    return pcd
+    return pcd, points.float().cpu(), locs.float().cpu()
 
 
 def render_trajectory(

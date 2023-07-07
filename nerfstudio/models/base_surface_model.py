@@ -151,15 +151,19 @@ class SurfaceModel(Model):
         # Fields
         self.field = self.config.sdf_field.setup(
             aabb=self.scene_box.aabb,
-            spatial_distortion=self.scene_contraction,
+            spatial_distortion=None,
+            # spatial_distortion=self.scene_contraction,
             num_images=self.num_train_data,
             use_average_appearance_embedding=self.config.use_average_appearance_embedding,
+            poses=self.poses,
+            scale=self.scale,
+            hashgrid_len=self.scene_box.hashgrid_len,
         )
-
         # Collider
         if self.scene_box.collider_type == "near_far":
             self.collider = NearFarCollider(near_plane=self.scene_box.near, far_plane=self.scene_box.far)
         elif self.scene_box.collider_type == "box":
+            # print(self.scene_box.aabb, self.scene_box.near)
             self.collider = AABBBoxCollider(self.scene_box, near_plane=self.scene_box.near)
         elif self.scene_box.collider_type == "sphere":
             # TODO do we also use near if the ray don't intersect with the sphere
@@ -174,7 +178,8 @@ class SurfaceModel(Model):
         # background model
         if self.config.background_model == "grid":
             self.field_background = TCNNNerfactoField(
-                self.scene_box.aabb,
+                torch.tensor([[-2.0, -2.0, -2.0], [2.0, 2.0, 2.0]]),
+                # self.scene_box.aabb,
                 spatial_distortion=self.scene_contraction,
                 num_images=self.num_train_data,
                 use_average_appearance_embedding=self.config.use_average_appearance_embedding,
@@ -282,6 +287,13 @@ class SurfaceModel(Model):
     #     return field_outputs
 
     def get_outputs(self, ray_bundle: RayBundle, lidar_rays=None, sky_mask=None) -> Dict:
+        ray_bundle = self.collider.set_nears_and_fars(ray_bundle)
+        ray_bundle.nears *= 0
+        # print('nears', ray_bundle.nears)
+        # farthest = ray_bundle.origins + ray_bundle.directions * ray_bundle.fars
+        # print('farthest', farthest)
+        # n = torch.linalg.norm(farthest, ord=float('inf'), dim=-1)
+        # print(torch.max(n))
         # TODO make this configurable
         # compute near and far from from sphere with radius 1.0
         # ray_bundle = self.sphere_collider(ray_bundle)
@@ -424,7 +436,7 @@ class SurfaceModel(Model):
         image = batch["image"].to(self.device)
         loss_dict["rgb_loss"] = self.rgb_loss(image, outputs["rgb"])
         if "sky_mask" in batch:
-            loss_dict["sky_accumulation_loss"] = 0.01*torch.nan_to_num(
+            loss_dict["sky_accumulation_loss"] = 0.005*torch.nan_to_num(
                 torch.mean(outputs["accumulation"][batch["sky_mask"]]), 0
             )
 
@@ -449,12 +461,24 @@ class SurfaceModel(Model):
                 )
 
             # monocular normal loss
-            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 and batch["step"] > 0:
-                normal_gt = batch["normal"].to(self.device)
-                normal_pred = outputs["normal"]
-                loss_dict["normal_loss"] = (
-                    monosdf_normal_loss(normal_pred, normal_gt, batch["road_mask"]) * self.config.mono_normal_loss_mult
-                )
+            # if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 and batch["step"] > 0:
+            #     normal_gt = batch["normal"].to(self.device)
+            #     normal_pred = outputs["normal"]
+            #     loss_dict["normal_loss"] = (
+            #         monosdf_normal_loss(normal_pred, normal_gt, batch["road_mask"]) * self.config.mono_normal_loss_mult
+            #     )
+
+            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0:
+                # mask = (outputs['accumulation'] > 0.5)[:, 0]
+                mask = ~batch['sky_mask']
+                if torch.sum(mask) == 0:
+                    loss_dict['normal_loss'] = 0
+                else:
+                    normal_gt = batch["normal"].to(self.device)[mask]
+                    normal_pred = outputs["normal"][mask]
+                    loss_dict["normal_loss"] = (
+                            monosdf_normal_loss(normal_pred, normal_gt) * self.config.mono_normal_loss_mult
+                    )
 
             # if "normal" in batch and self.config.mono_normal_loss_mult > 0.0 \
             #         and batch["step"] > 20000 and batch["step"] % 10 == 0:
@@ -484,6 +508,10 @@ class SurfaceModel(Model):
                 l3 = torch.mean(
                     torch.maximum(occupancy[:, 61:], torch.zeros_like(occupancy[:, 61:], device=device))
                 )
+                # UDF
+                # l3 = torch.mean(
+                #     torch.maximum(0.01-occupancy[:, 61:], torch.zeros_like(occupancy[:, 61:], device=device))
+                # )
                 loss_dict["lidar_loss"] = 0.1 * (l1 + l2 + l3)
 
             # urban radiance field loss
@@ -537,12 +565,10 @@ class SurfaceModel(Model):
                 depth_pred = outputs["depth"]
 
                 # mask = torch.ones_like(depth_gt).reshape(1, 32, -1).bool()
-
                 mask = ~batch['sky_mask'].reshape(1, 32, -1).bool()
-                # mask = batch["road_mask"].reshape(1, 32, -1).bool()
-                # depth loss
+
                 loss_dict["depth_loss"] = (
-                    self.depth_loss(depth_pred.reshape(1, 32, -1), depth_gt.reshape(1, 32, -1), mask)
+                    self.depth_loss(depth_pred.reshape(1, 32, -1), (depth_gt * 50 + 0.5).reshape(1, 32, -1), mask)
                     * self.config.mono_depth_loss_mult
                 )
 
@@ -713,10 +739,11 @@ class SurfaceModel(Model):
 
         psnr = self.psnr(image, rgb)
         ssim = self.ssim(image, rgb)
-        # lpips = self.lpips(image, rgb)
+        cpu_lpips = self.lpips.to(image.device)
+        lpips = cpu_lpips(image, rgb)
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
-        # metrics_dict["lpips"] = float(lpips)
+        metrics_dict["lpips"] = float(lpips)
 
         return metrics_dict, images_dict

@@ -276,6 +276,7 @@ class TCNNNerfactoField(Field):
         # appearance
         if self.training:
             embedded_appearance = self.embedding_appearance(camera_indices)
+            # embedded_appearance = torch.zeros_like(embedded_appearance)
         else:
             if self.use_average_appearance_embedding:
                 embedded_appearance = torch.ones(

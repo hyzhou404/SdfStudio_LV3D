@@ -39,6 +39,7 @@ def apply_colormap(image: TensorType["bs":..., 1], cmap="viridis") -> TensorType
     image_long = (image * 255).long()
     image_long_min = torch.min(image_long)
     image_long_max = torch.max(image_long)
+    torch.save(image, '/data4/hyzhou/exp/image.pt')
     assert image_long_min >= 0, f"the min value is {image_long_min}"
     assert image_long_max <= 255, f"the max value is {image_long_max}"
     return colormap[image_long[..., 0]]

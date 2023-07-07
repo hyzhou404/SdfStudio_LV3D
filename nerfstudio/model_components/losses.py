@@ -268,8 +268,8 @@ def monosdf_normal_loss(normal_pred: torch.Tensor, normal_gt: torch.Tensor, mask
     normal_gt = torch.nn.functional.normalize(normal_gt, p=2, dim=-1)
     normal_pred = torch.nn.functional.normalize(normal_pred, p=2, dim=-1)
     l1 = torch.abs(normal_pred - normal_gt)[mask].sum(dim=-1).mean()
-    # cos = (1.0 - torch.sum((normal_pred * normal_gt)[mask], dim=-1)).mean()
-    return l1
+    cos = (1.0 - torch.sum((normal_pred * normal_gt)[mask], dim=-1)).mean()
+    return l1 + cos
 
 
 def monosdf_normal_diff_loss(normal_pred: torch.Tensor, normal_gt: torch.Tensor):

@@ -1,9 +1,23 @@
-CUDA_VISIBLE_DEVICES=4 \
-ns-train unisurf --pipeline.model.sdf-field.inside-outside True \
+#CUDA_VISIBLE_DEVICES=5 \
+#ns-train unisurf --pipeline.model.sdf-field.inside-outside True \
+#                    --vis tensorboard \
+#                    --experiment-name 3353_unisurf \
+#                    --discription s19f4_h256_PT \
+#                    sdfstudio-data --data /data/hyzhou/data/kitti_neus_v2/frame50_3353_lidar
+
+CUDA_VISIBLE_DEVICES=3 \
+ns-train neus-facto --pipeline.model.sdf-field.inside-outside True \
                     --vis tensorboard \
-                    --experiment-name 3353_backbone \
-                    --discription s21f4_h256_SH_Ref \
+                    --experiment-name 3353_AABB \
+                    --discription s19f8_h128_LI6_consist_pos \
                     sdfstudio-data --data /data/hyzhou/data/kitti_neus_v2/frame50_3353_lidar
+
+#CUDA_VISIBLE_DEVICES=4 \
+#ns-train neus-facto --pipeline.model.sdf-field.inside-outside True \
+#                    --vis tensorboard \
+#                    --experiment-name dev \
+#                    --discription debug \
+#                    sdfstudio-data --data /data/hyzhou/data/kitti_neus_v2/frame50_3353_lidar
 
 #CUDA_VISIBLE_DEVICES=3 \
 #ns-train nerfacto   --vis tensorboard \

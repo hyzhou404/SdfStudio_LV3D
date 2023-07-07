@@ -456,7 +456,7 @@ method_configs["neus-facto"] = Config(
         steps_per_eval_batch=5000,
         steps_per_save=25000,
         steps_per_eval_all_images=25000,  # set to a very large model so we don't eval with all images
-        max_num_iterations=50001,
+        max_num_iterations=100001,
         mixed_precision=False,
     ),
     pipeline=VanillaPipelineConfig(
@@ -471,15 +471,34 @@ method_configs["neus-facto"] = Config(
         model=NeuSFactoModelConfig(
             sdf_field=SDFFieldConfig(
                 use_grid_feature=True,
+
                 num_layers=2,
-                num_layers_color=2,
-                hidden_dim=256,
+                num_layers_color=4,
+                hidden_dim=128,
+                geo_feat_dim=128,
+                hidden_dim_color=128,
+
+                num_levels=16,
+                max_res=4096,
+                base_res=32,
+                log2_hashmap_size=19,
+                hash_features_per_level=8,
+
                 bias=0.5,
                 beta_init=0.3,
+
                 use_appearance_embedding=False,
+                geometric_init=False,
+                use_reflections=False,
+                use_position_encoding=False,
+                use_numerical_gradients=True,
             ),
             background_model="grid",
-            eval_num_rays_per_chunk=4096,
+            eval_num_rays_per_chunk=1024,
+            enable_progressive_hash_encoding=True,
+            enable_numerical_gradients_schedule=True,
+            enable_curvature_loss_schedule=True,
+            curvature_loss_multi=5e-4,
         ),
     ),
     optimizers={
@@ -760,7 +779,7 @@ method_configs["unisurf"] = Config(
         steps_per_eval_batch=5000,
         steps_per_save=10000,
         steps_per_eval_all_images=20000,  # set to a very large model so we don't eval with all images
-        max_num_iterations=40001,
+        max_num_iterations=60001,
         mixed_precision=False,
     ),
     pipeline=VanillaPipelineConfig(
@@ -775,19 +794,34 @@ method_configs["unisurf"] = Config(
         model=UniSurfModelConfig(
             sdf_field=SDFFieldConfig(
                 use_grid_feature=True,
+
                 num_layers=2,
                 num_layers_color=2,
                 hidden_dim=256,
                 geo_feat_dim=256,
                 hidden_dim_color=256,
+
+                num_levels=16,
+                max_res=2048,
+                base_res=16,
+                log2_hashmap_size=19,
+                hash_features_per_level=4,
+
                 bias=0.5,
                 beta_init=0.3,
+
                 use_appearance_embedding=False,
                 geometric_init=True,
-                use_reflections=True,
+                use_reflections=False,
+                use_position_encoding=False,
+                use_numerical_gradients=False,
             ),
             background_model="grid",
             eval_num_rays_per_chunk=2048,
+            enable_progressive_hash_encoding=True,
+            enable_numerical_gradients_schedule=False,
+            enable_curvature_loss_schedule=False,
+            curvature_loss_multi=5e-4,
         ),
     ),
     optimizers={
@@ -994,13 +1028,24 @@ method_configs["nerfacto"] = Config(
     pipeline=VanillaPipelineConfig(
         datamanager=VanillaDataManagerConfig(
             dataparser=NerfstudioDataParserConfig(),
-            train_num_rays_per_batch=2048,
-            eval_num_rays_per_batch=2048,
+            train_num_rays_per_batch=4096,
+            eval_num_rays_per_batch=4096,
             # camera_optimizer=CameraOptimizerConfig(
             #     mode="SO3xR3", optimizer=AdamOptimizerConfig(lr=6e-4, eps=1e-8, weight_decay=1e-2)
             # ),
         ),
-        model=NerfactoModelConfig(eval_num_rays_per_chunk=1 << 15),
+        model=NerfactoModelConfig(
+
+            num_levels=16,
+            max_res=4096,
+            log2_hashmap_size=19,
+
+            use_average_appearance_embedding=True,
+            eval_num_rays_per_chunk=1 << 15,
+
+            predict_normals=False,
+            compute_normals=False,
+        ),
     ),
     optimizers={
         "proposal_networks": {

@@ -90,11 +90,11 @@ class NeuSFactoModelConfig(NeuSModelConfig):
     """whether to use curvature loss weight schedule"""
     curvature_loss_multi: float = 0.0
     """curvature loss weight"""
-    curvature_loss_warmup_steps: int = 20_000
+    curvature_loss_warmup_steps: int = 12000
     """curvature loss warmup steps"""
-    level_init: int = 4
+    level_init: int = 6
     """initial level of multi-resolution hash encoding"""
-    steps_per_level: int = 10_000
+    steps_per_level: int = 2000
     """steps per level of multi-resolution hash encoding"""
 
 
@@ -284,7 +284,6 @@ class NeuSFactoModel(NeuSModel):
     def sample_and_forward_field(self, ray_bundle: RayBundle, sky_mask=None):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
 
-
         # field_outputs = self.field(ray_samples, return_alphas=True)
         #
         # if self.config.background_model != "none":
@@ -292,12 +291,12 @@ class NeuSFactoModel(NeuSModel):
         #
         # weights = ray_samples.get_weights_from_alphas(field_outputs[FieldHeadNames.ALPHA])
 
-        # field_outputs = self.field(ray_samples, return_alphas=True)
-        # weights, transmittance = ray_samples.get_weights_and_transmittance_from_alphas(
-        #     field_outputs[FieldHeadNames.ALPHA]
-        # )
-        field_outputs = self.field.forward(ray_samples)
-        weights, transmittance = ray_samples.get_weights_and_transmittance(field_outputs[FieldHeadNames.DENSITY])
+        field_outputs = self.field(ray_samples, return_alphas=True)
+        weights, transmittance = ray_samples.get_weights_and_transmittance_from_alphas(
+            field_outputs[FieldHeadNames.ALPHA]
+        )
+        # field_outputs = self.field.forward(ray_samples)
+        # weights, transmittance = ray_samples.get_weights_and_transmittance(field_outputs[FieldHeadNames.DENSITY])
 
         bg_transmittance = transmittance[:, -1, :]
 
@@ -313,6 +312,24 @@ class NeuSFactoModel(NeuSModel):
             "bg_transmittance": bg_transmittance
         }
         return samples_and_field_outputs
+
+    def lidar_sample_and_sdf_field(self, lidar_rays):
+        device = lidar_rays.device
+        lidar_locs, lidar_points = lidar_rays[:, :3][:, None, :], lidar_rays[:, 3:][:, None, :]
+        lidar_range = lidar_points - lidar_locs
+
+        front_samples = lidar_locs.repeat(1, 60, 1) + \
+                        lidar_range.repeat(1, 60, 1) * torch.rand((1, 60, 1), device=device)
+        point_sample = lidar_points
+        back_samples = lidar_points.repeat(1, 3, 1) + torch.rand((1, 3, 1), device=device) * 0.01
+
+        lidar_ray_samples = torch.cat([front_samples, point_sample, back_samples], 1)
+        lidar_ray_samples = lidar_ray_samples.view(-1, 3).float()
+
+        sdf = self.field.forward_geonetwork(lidar_ray_samples)[..., 0]
+        # TODO: Why using occupancy supervision is unsuitable?
+        # occupancy = F.sigmoid(-10.0 * sdf)
+        return sdf.view(1024, 64)
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
         loss_dict = super().get_loss_dict(outputs, batch, metrics_dict)

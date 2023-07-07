@@ -45,6 +45,7 @@ from nerfstudio.model_components.losses import (
     interlevel_loss,
     orientation_loss,
     pred_normal_loss,
+    monosdf_normal_loss
 )
 from nerfstudio.model_components.ray_samplers import ProposalNetworkSampler
 from nerfstudio.model_components.renderers import (
@@ -116,6 +117,8 @@ class NerfactoModelConfig(ModelConfig):
     """Whether use single jitter or not for the proposal networks."""
     predict_normals: bool = False
     """Whether to predict normals or not."""
+    compute_normals: bool = False
+    """Whether to compute normals by density gradients or not"""
 
 
 class NerfactoModel(Model):
@@ -241,7 +244,8 @@ class NerfactoModel(Model):
 
     def get_outputs(self, ray_bundle: RayBundle, lidar_rays=None, sky_mask=None):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
-        field_outputs = self.field(ray_samples, compute_normals=self.config.predict_normals)
+        field_outputs = self.field(ray_samples,
+                                   compute_normals=(self.config.predict_normals or self.config.compute_normals))
         weights = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
@@ -256,8 +260,9 @@ class NerfactoModel(Model):
             "depth": depth,
         }
 
-        if self.config.predict_normals:
+        if self.config.predict_normals or self.config.compute_normals:
             outputs["normals"] = self.renderer_normals(normals=field_outputs[FieldHeadNames.NORMALS], weights=weights)
+        if self.config.predict_normals:
             outputs["pred_normals"] = self.renderer_normals(field_outputs[FieldHeadNames.PRED_NORMALS], weights=weights)
 
         # These use a lot of GPU memory, so we avoid storing them for eval.
@@ -265,11 +270,12 @@ class NerfactoModel(Model):
             outputs["weights_list"] = weights_list
             outputs["ray_samples_list"] = ray_samples_list
 
-        if self.training and self.config.predict_normals:
+        if self.training and self.config.compute_normals:
             outputs["rendered_orientation_loss"] = orientation_loss(
                 weights.detach(), field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
             )
 
+        if self.training and self.config.predict_normals:
             outputs["rendered_pred_normal_loss"] = pred_normal_loss(
                 weights.detach(),
                 field_outputs[FieldHeadNames.NORMALS].detach(),
@@ -299,16 +305,35 @@ class NerfactoModel(Model):
             )
             assert metrics_dict is not None and "distortion" in metrics_dict
             loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
-            if self.config.predict_normals:
+            if self.config.compute_normals:
                 # orientation loss for computed normals
                 loss_dict["orientation_loss"] = self.config.orientation_loss_mult * torch.mean(
                     outputs["rendered_orientation_loss"]
                 )
 
+            if self.config.predict_normals:
                 # ground truth supervision for normals
                 loss_dict["pred_normal_loss"] = self.config.pred_normal_loss_mult * torch.mean(
                     outputs["rendered_pred_normal_loss"]
                 )
+
+            # if "normal" in batch and "road_mask" in batch and batch["step"] > 10000:
+            #     normal_gt = batch['normal'].to(self.device)
+            #     normal_pred = outputs['normals']
+            #     loss_dict["normal_loss"] = (
+            #         monosdf_normal_loss(normal_pred, normal_gt, batch["road_mask"]) * 0.001
+            #     )
+
+            # if "road_mask" in batch:
+            #     mask = batch['road_mask']
+            #     y_indices = batch['indices'][:, 1][mask].to(outputs['depth'].device)
+            #     road_depth = outputs['depth'][mask]
+            #     _, sorted_indices = torch.sort(y_indices)
+            #     road_depth = torch.index_select(road_depth, 0, sorted_indices)
+            #     cum_max_depth = torch.cummax(road_depth, dim=0)[0]
+            #     depth_loss = torch.mean(torch.clip(cum_max_depth - road_depth, min=0))
+            #     loss_dict['depth_loss'] = depth_loss
+
         return loss_dict
 
     def get_image_metrics_and_images(
@@ -375,11 +400,12 @@ class NerfactoModel(Model):
 
         psnr = self.psnr(image, rgb)
         ssim = self.ssim(image, rgb)
-        # lpips = self.lpips(image, rgb)
+        cpu_lpips = self.lpips.to(image.device)
+        lpips = cpu_lpips(image, rgb)
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
-        # metrics_dict["lpips"] = float(lpips)
+        metrics_dict["lpips"] = float(lpips)
 
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
 

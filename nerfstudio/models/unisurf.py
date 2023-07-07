@@ -53,6 +53,20 @@ class UniSurfModelConfig(SurfaceModelConfig):
     perturb: bool = True
     """use to use perturb for the sampled points"""
 
+    enable_progressive_hash_encoding: bool = False
+    """whether to use progressive hash encoding"""
+    enable_numerical_gradients_schedule: bool = False
+    """whether to use numerical gradients delta schedule"""
+    enable_curvature_loss_schedule: bool = False
+    """whether to use curvature loss weight schedule"""
+    curvature_loss_multi: float = 0.0
+    """curvature loss weight"""
+    curvature_loss_warmup_steps: int = 5000
+    """curvature loss warmup steps"""
+    level_init: int = 4
+    """initial level of multi-resolution hash encoding"""
+    steps_per_level: int = 2000
+    """steps per level of multi-resolution hash encoding"""
 
 class UniSurfModel(SurfaceModel):
     """VolSDF model
@@ -88,6 +102,24 @@ class UniSurfModel(SurfaceModel):
                 func=self.sampler.step_cb,
             )
         )
+
+        level_init = self.config.level_init
+        steps_per_level = self.config.steps_per_level
+        # schedule the current level of multi-resolution hash encoding
+        if self.config.enable_progressive_hash_encoding:
+            def set_mask(step):
+                # TODO make this consistent with delta schedule
+                level = int(step / steps_per_level) + 1
+                level = max(level, level_init)
+                self.field.update_mask(level)
+
+            callbacks.append(
+                TrainingCallback(
+                    where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
+                    update_every_num_iters=1,
+                    func=set_mask,
+                )
+            )
         return callbacks
 
     def sample_and_forward_field(self, ray_bundle: RayBundle, sky_mask=None) -> Dict:

@@ -42,6 +42,7 @@ class SceneBox:
     """radius of sphere"""
     collider_type: Literal["box", "near_far", "sphere"] = "box"
     """collider type for each ray, default is box"""
+    hashgrid_len: float = 20
 
     def get_diagonal_length(self):
         """Returns the longest diagonal length."""

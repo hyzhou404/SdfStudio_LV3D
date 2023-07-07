@@ -24,13 +24,15 @@ from rich.progress import (
 )
 from typing_extensions import Literal, assert_never
 
-from nerfstudio.cameras.camera_paths import get_path_from_json, get_spiral_path
+from nerfstudio.cameras.camera_paths import get_path_from_json, get_myspiral_path
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.configs.base_config import Config  # pylint: disable=unused-import
 from nerfstudio.pipelines.base_pipeline import Pipeline
 from nerfstudio.utils import install_checks
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import ItersPerSecColumn
+from imageio.v2 import imwrite
+import os
 
 CONSOLE = Console(width=120)
 
@@ -99,6 +101,15 @@ def _render_trajectory_video(
     CONSOLE.rule("[green] :tada: :tada: :tada: Success :tada: :tada: :tada:")
     CONSOLE.print(f"[green]Saved video to {output_filename}", justify="center")
 
+    frame_dir = output_filename.with_suffix('')
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    with CONSOLE.status("[yellow]Saving frames", spinner="bouncingBall"):
+        for idx, image in enumerate(images):
+            image = (image * 255).astype(np.uint8)
+            imwrite(os.path.join(frame_dir, f"{str(idx).zfill(3)}.png"), image)
+    CONSOLE.rule("[green] :tada: :tada: :tada: Success :tada: :tada: :tada:")
+    CONSOLE.print(f"[green]Saved image to {frame_dir}", justify="center")
+
 
 @dataclass
 class RenderTrajectory:
@@ -138,8 +149,11 @@ class RenderTrajectory:
         # TODO(ethan): use camera information from parsing args
         if self.traj == "spiral":
             camera_start = pipeline.datamanager.eval_dataloader.get_camera(image_idx=0).flatten()
+            camera_end = pipeline.datamanager.eval_dataloader.get_camera(image_idx=1).flatten()
             # TODO(ethan): pass in the up direction of the camera
-            camera_path = get_spiral_path(camera_start, steps=30, radius=0.1)
+            camera_path = get_myspiral_path(camera_start, camera_end, steps=30, radius=0.005, rot=2*np.pi*0.1, zrate=0.03)
+            # print(camera_path)
+            # exit(0)
         elif self.traj == "filename":
             with open(self.camera_path_filename, "r", encoding="utf-8") as f:
                 camera_path = json.load(f)

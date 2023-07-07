@@ -108,6 +108,58 @@ def get_spiral_path(
         fy=camera.fy[0],
         cx=camera.cx[0],
         cy=camera.cy[0],
+        width=camera.width,
+        height=camera.height,
+        camera_to_worlds=new_c2ws,
+    )
+
+
+def get_myspiral_path(
+    camera_start: Cameras,
+    camera_end: Cameras,
+    steps: int = 30,
+    radius: Optional[float] = None,
+    zrate: float = 0.01,
+    rot: float = 2*np.pi*0.1
+) -> Cameras:
+    """
+    Returns a list of camera in a sprial trajectory.
+
+    Args:
+        camera: The camera to start the spiral from.
+        steps: The number of cameras in the generated path.
+        radius: The radius of the spiral for all xyz directions.
+        zrate: How much to change the z position of the camera.
+
+    Returns:
+        A spiral camera path.
+    """
+
+    assert camera_start.ndim == 1, "We assume only one batch dim here"
+
+    camera = camera_start[0]
+    camera_end = camera_end[0]
+    move_direct = camera_end.camera_to_worlds[:3, 3] - camera.camera_to_worlds[:3, 3]
+    print(move_direct.shape, camera.camera_to_worlds.shape)
+
+    c2w = camera.camera_to_worlds
+
+    new_c2ws = []
+    for i in range(steps):
+        theta = i * rot
+        bias = torch.tensor([radius*np.cos(theta), -radius*np.sin(theta), 0], device=c2w.device)
+        temp_c2w = torch.clone(c2w)
+        temp_c2w[:3, 3] += (move_direct * zrate * i + bias)
+        new_c2ws.append(temp_c2w)
+    new_c2ws = torch.stack(new_c2ws)
+
+    return Cameras(
+        fx=camera.fx[0],
+        fy=camera.fy[0],
+        cx=camera.cx[0],
+        cy=camera.cy[0],
+        width=camera.width,
+        height=camera.height,
         camera_to_worlds=new_c2ws,
     )
 

@@ -40,10 +40,19 @@ class ExtractMesh:
     simplify_mesh: bool = False
     # extract the mesh using occupancy field (unisurf) or SDF, default sdf
     is_occupancy: bool = False
+
+    # KITTI-360
+    # """Minimum of the bounding box."""
+    # bounding_box_min: Tuple[float, float, float] = (-0.6, -0.4, -0.6)
+    # """Maximum of the bounding box."""
+    # bounding_box_max: Tuple[float, float, float] = (0.6, 0.2, 1)
+
+    # Waymo
     """Minimum of the bounding box."""
-    bounding_box_min: Tuple[float, float, float] = (-1, -0.5, -2)
+    bounding_box_min: Tuple[float, float, float] = (-0.3, -0.3, -1)
     """Maximum of the bounding box."""
-    bounding_box_max: Tuple[float, float, float] = (1, 1.0, 2)
+    bounding_box_max: Tuple[float, float, float] = (0.3, 0.1, 1)
+
     """marching cube threshold"""
     marching_cube_threshold: float = 0.0
     """create visibility mask"""
@@ -137,6 +146,7 @@ class ExtractMesh:
             # for sdf we can multi-scale extraction.
             get_surface_sliding(
                 sdf=lambda x: pipeline.model.field.forward_geonetwork(x)[:, 0].contiguous() - 0.003,
+                # sdf=lambda x: pipeline.model.field.get_pos_density(x)[0].contiguous() - 1,
                 resolution=self.resolution,
                 bounding_box_min=self.bounding_box_min,
                 bounding_box_max=self.bounding_box_max,
