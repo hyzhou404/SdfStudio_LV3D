@@ -1501,3 +1501,104 @@ class NeuSAccSampler(Sampler):
             # save_points("second.ply", ray_samples.frustums.get_start_positions().cpu().numpy().reshape(-1, 3))
 
         return ray_samples, ray_indices
+
+
+class SphereTracing(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx,
+        signed_distance_function,
+        ray_positions,
+        ray_directions,
+        num_iterations,
+        convergence_threshold,
+        foreground_masks=None,
+        *parameters,
+    ):
+
+        if foreground_masks is None:
+            foreground_masks = torch.all(torch.isfinite(ray_positions), dim=-1, keepdim=True)
+
+        # prev_sdf = torch.ones((ray_positions.shape[0], 1), device=ray_directions.device).float() * 0.03
+        valid_mask = torch.zeros((ray_positions.shape[0], 1), device=ray_positions.device).bool()
+        with torch.no_grad():
+            for i in range(num_iterations):
+                signed_distances = signed_distance_function(ray_positions)
+                change_mask = signed_distances > convergence_threshold
+                valid_mask = (change_mask | valid_mask)
+                signed_distances = torch.where(~valid_mask, 0.02, signed_distances)
+                # print(i)
+                if i:
+                    ray_positions = torch.where(foreground_masks & ~converged,
+                                                ray_positions + ray_directions * signed_distances, ray_positions)
+                else:
+                    ray_positions = torch.where(foreground_masks, ray_positions + ray_directions * signed_distances,
+                                                ray_positions)
+                converged = torch.abs(signed_distances) < convergence_threshold
+                # prev_sdf = signed_distances
+                if torch.all(~foreground_masks | converged):
+                    break
+
+            # save tensors for backward pass
+        ctx.save_for_backward(ray_positions, ray_directions, foreground_masks, converged)
+        ctx.signed_distance_function = signed_distance_function
+        ctx.parameters = parameters
+
+        return ray_positions, converged
+
+    @staticmethod
+    def backward(ctx, grad_outputs, _):
+        # restore tensors from forward pass
+        ray_positions, ray_directions, foreground_masks, converged = ctx.saved_tensors
+        signed_distance_function = ctx.signed_distance_function
+        parameters = ctx.parameters
+
+        # compute gradients using implicit differentiation
+        # NOTE: Differentiable Volumetric Rendering: https://arxiv.org/abs/1912.07372
+        with torch.enable_grad():
+            ray_positions = ray_positions.detach()
+            ray_positions.requires_grad_(True)
+            signed_distances = signed_distance_function(ray_positions)
+            grad_positions, = torch.autograd.grad(
+                outputs=signed_distances,
+                inputs=ray_positions,
+                grad_outputs=torch.ones_like(signed_distances),
+                retain_graph=True,
+            )
+            grad_outputs_dot_directions = torch.sum(grad_outputs * ray_directions, dim=-1, keepdim=True)
+            grad_positions_dot_directions = torch.sum(grad_positions * ray_directions, dim=-1, keepdim=True)
+            # NOTE: avoid division by zero
+            grad_positions_dot_directions = torch.where(
+                grad_positions_dot_directions > 0,
+                torch.max(grad_positions_dot_directions, torch.full_like(grad_positions_dot_directions, +1e-6)),
+                torch.min(grad_positions_dot_directions, torch.full_like(grad_positions_dot_directions, -1e-6)),
+            )
+            grad_outputs = -grad_outputs_dot_directions / grad_positions_dot_directions
+            # NOTE: zero gradients of unconverged points
+            grad_outputs = torch.where(converged, grad_outputs, torch.zeros_like(grad_outputs))
+            grad_parameters = torch.autograd.grad(
+                outputs=signed_distances,
+                inputs=parameters,
+                grad_outputs=grad_outputs,
+                retain_graph=True,
+            )
+
+        return None, None, None, None, None, None, None, *grad_parameters
+
+
+def sphere_tracing(
+    signed_distance_function,
+    ray_positions,
+    ray_directions,
+    num_iterations=500,
+    convergence_threshold=1e-3,
+    foreground_masks=None,
+):
+    return SphereTracing.apply(
+        signed_distance_function,
+        ray_positions,
+        ray_directions,
+        num_iterations,
+        convergence_threshold,
+        foreground_masks,
+    )

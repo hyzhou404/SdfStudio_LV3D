@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, Optional, Type
 
 import numpy as np
+import open3d as o3d
 import torch
 from PIL import Image
 from rich.console import Console
@@ -206,13 +207,15 @@ class SDFStudio(DataParser):
         all_indices = list(range(len(meta["frames"])))
         train_indices = [i for i in all_indices if (i % 4 == 0 or i % 4 == 1)]
         eval_indices = [i for i in all_indices if (i % 4 == 2)]
+        # train_indices = [i for i in all_indices if i % 10 != 2]
+        # eval_indices = [i for i in all_indices if (i % 10 == 2)]
         # eval_indices = [20, 40, 60, 80]
         # eval_indices = [10, 40, 60, 80]
         # eval_indices = [30, 60, 90, 120, 180]
         # subsample to avoid out-of-memory for validation set
         if split != "train" and self.config.skip_every_for_val_split >= 1:
             # indices = [i for i in indices if (i+1) % self.config.skip_every_for_val_split == 0]
-            indices = eval_indices[::3]
+            indices = eval_indices
             # indices = train_indices[::6]
             # indices = [30, 210]
         else:
@@ -457,5 +460,6 @@ class SDFStudio(DataParser):
             depths=depth_images,
             normals=normal_images,
             lidar_rays=lidar_rays,
+            alpha_color=1,
         )
         return dataparser_outputs

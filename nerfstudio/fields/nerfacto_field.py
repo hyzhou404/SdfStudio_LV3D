@@ -220,6 +220,18 @@ class TCNNNerfactoField(Field):
             },
         )
 
+        # self.mlp_head_diffuse = tcnn.Network(
+        #     n_input_dims=self.geo_feat_dim + self.appearance_embedding_dim,
+        #     n_output_dims=3,
+        #     network_config={
+        #         "otype": "FullyFusedMLP",
+        #         "activation": "ReLU",
+        #         "output_activation": "Sigmoid",
+        #         "n_neurons": hidden_dim_color,
+        #         "n_hidden_layers": num_layers_color - 1,
+        #     },
+        # )
+
     def get_density(self, ray_samples: RaySamples):
         """Computes and returns the densities."""
         if self.spatial_distortion is not None:
@@ -332,7 +344,14 @@ class TCNNNerfactoField(Field):
             ],
             dim=-1,
         )
+        h_diffuse = torch.cat([
+            density_embedding.view(-1, self.geo_feat_dim),
+            embedded_appearance.view(-1, self.appearance_embedding_dim),
+        ], dim=-1)
+
         rgb = self.mlp_head(h).view(*outputs_shape, -1).to(directions)
+        # diffuse_rgb = self.mlp_head_diffuse(h_diffuse).view(*outputs_shape, -1).to(directions)
+        # rgb = 0.5 * rgb + 0.5 * diffuse_rgb
         outputs.update({FieldHeadNames.RGB: rgb})
 
         return outputs

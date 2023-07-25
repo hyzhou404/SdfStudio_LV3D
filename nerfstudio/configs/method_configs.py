@@ -59,6 +59,7 @@ from nerfstudio.models.dto import DtoOModelConfig
 from nerfstudio.models.instant_ngp import InstantNGPModelConfig
 from nerfstudio.models.mipnerf import MipNerfModel
 from nerfstudio.models.nerfacto import NerfactoModelConfig
+from nerfstudio.models.nksr import NKSRModelConfig
 from nerfstudio.models.neuralangelo import NeuralangeloModelConfig
 from nerfstudio.models.bakedangelo import BakedAngeloModelConfig
 from nerfstudio.models.neuralreconW import NeuralReconWModelConfig
@@ -105,6 +106,7 @@ descriptions = {
     "neuralangelo": "Implementation of Neuralangelo",
     "bakedangelo": "Implementation of Neuralangelo with BakedSDF",
     "neus-facto-angelo": "Implementation of Neuralangelo with neus-facto",
+    "nksr": "Surface and RGB reconstruction based on NKSR"
 }
 
 
@@ -1052,6 +1054,45 @@ method_configs["nerfacto"] = Config(
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
             "scheduler": MultiStepSchedulerConfig(max_steps=400001),
         },
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+            "scheduler": MultiStepSchedulerConfig(max_steps=400001),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+)
+
+method_configs["nksr"] = Config(
+    method_name="nksr",
+    trainer=TrainerConfig(
+        steps_per_eval_batch=500,
+        steps_per_eval_image=500,
+        steps_per_save=2000,
+        max_num_iterations=10001,
+        mixed_precision=False
+    ),
+    pipeline=VanillaPipelineConfig(
+        datamanager=VanillaDataManagerConfig(
+            dataparser=NerfstudioDataParserConfig(),
+            train_num_rays_per_batch=1 << 15,
+            eval_num_rays_per_batch=1 << 15,
+        ),
+        model=NKSRModelConfig(
+            num_levels=16,
+            features_per_level=2,
+            base_res=16,
+            log2_hashmap_size=19,
+            growth_factor=2,
+
+            use_average_appearance_embedding=True,
+            eval_num_rays_per_chunk=1 << 15,
+
+            predict_normals=False,
+            compute_normals=False,
+        ),
+    ),
+    optimizers={
         "fields": {
             "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
             "scheduler": MultiStepSchedulerConfig(max_steps=400001),

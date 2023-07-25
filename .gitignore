@@ -165,6 +165,7 @@ cython_debug/
 # Experiments and outputs
 outputs/
 exports/
+evals/
 renders/
 outputs
 vis/

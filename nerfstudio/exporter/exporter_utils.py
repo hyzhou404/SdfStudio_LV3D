@@ -21,6 +21,7 @@ Export utils such as structs, point cloud generation, and rendering code.
 from __future__ import annotations
 
 import sys
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -38,13 +39,11 @@ from rich.progress import (
 )
 from torchtyping import TensorType
 
-from nerfstudio.cameras.cameras import Cameras
+from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.configs.base_config import Config  # pylint: disable=unused-import
+from nerfstudio.model_components.ray_generators import RayGenerator
 from nerfstudio.pipelines.base_pipeline import Pipeline
 from nerfstudio.utils.rich_utils import ItersPerSecColumn
-from copy import deepcopy
-from nerfstudio.cameras.cameras import Cameras, CameraType
-from nerfstudio.model_components.ray_generators import RayGenerator
 
 CONSOLE = Console(width=120)
 
@@ -204,7 +203,7 @@ def generate_point_cloud(
                 # coord = torch.stack([y, x], dim=-1)
                 # ray_bundle = dense_cameras.generate_rays(c.unsqueeze(-1), coord)
                 ray_bundle, batch = pipeline.datamanager.next_train(0)
-                ray_bundle = ray_bundle[~batch['sky_mask']]
+                # ray_bundle = ray_bundle[~batch['sky_mask']]
                 outputs = pipeline.model(ray_bundle)
             if rgb_output_name not in outputs:
                 CONSOLE.rule("Error", style="red")

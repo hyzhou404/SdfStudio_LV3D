@@ -1,18 +1,20 @@
-import torch
+import json
 from pathlib import Path
+
+import numpy as np
 import open3d as o3d
 import torch
-from nerfstudio.utils.eval_utils import eval_setup
-from nerfstudio.cameras.cameras import Cameras, CameraType
 from imageio.v2 import imwrite
-import json
-import numpy as np
 
-load_config = Path('outputs/3353_bgm/nerfacto/2023-06-16_204725/config.yml')
+from nerfstudio.cameras.cameras import Cameras, CameraType
+from nerfstudio.utils.eval_utils import eval_setup
+
+# load_config = Path('/data4/hyzhou/outputs/kitti/3353_f60_d50/nerfacto/specular/config.yml')
+load_config = Path('/data4/hyzhou/outputs/kitti/3353_f60_d50/nerfacto/diffuse_specular/config.yml')
 # load_config = Path('outputs/3353_lidar_2/unisurf/2023-06-20_205342/config.yml')
 config, pipeline, checkpoint_path = eval_setup(load_config)
 
-with open('/data/hyzhou/data/kitti_neus_v2/frame50_3353_lidar/meta_data.json', 'r') as rf:
+with open('/data4/hyzhou/data/kitti_neus/3353_f60_aabb/meta_data.json', 'r') as rf:
     meta_data = json.load(rf)
 poses = []
 for frame in meta_data['frames']:
@@ -24,8 +26,8 @@ poses[:, 0:3, 1:3] *= -1
 camera_idx = 41
 origin_pose = poses[camera_idx, :3, :4]
 new_pose = torch.clone(origin_pose)
-new_pose[:3, 3] += torch.tensor([0.15, 0, 0])
-rot = -0 * np.pi
+new_pose[:3, 3] += torch.tensor([0, 0, 0])
+rot = -0.1 * np.pi
 xz_rotation_matrix = torch.tensor([[np.cos(rot), 0, -np.sin(rot)], [0, 1, 0], [np.sin(rot), 0, np.cos(rot)]]).float()
 new_pose[:3, :3] = new_pose[:3, :3] @ xz_rotation_matrix
 
